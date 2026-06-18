@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { sanitizeHTML, MAX_ELEMENTS_ADDED } from "../src/sanitize.js";
+import { sanitizeHTML, MAX_ELEMENTS_ADDED, MIN_BODY_CHILDREN, checkStructuralDelta, countBodyChildren } from "../src/sanitize.js";
 import { SEED_ROOT_HTML } from "../src/seed.js";
 
 describe("sanitize", () => {
@@ -89,6 +89,45 @@ describe("sanitize", () => {
   describe("structural guards", () => {
     it("MAX_ELEMENTS_ADDED is exposed", () => {
       assert.ok(MAX_ELEMENTS_ADDED > 0);
+    });
+
+    it("MIN_BODY_CHILDREN is exposed", () => {
+      assert.equal(MIN_BODY_CHILDREN, 1);
+    });
+
+    it("rejects edit that would leave page with 0 body children", () => {
+      const result = checkStructuralDelta(5, 0);
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.match(result.reason, /no content/);
+      }
+    });
+
+    it("allows edit that drops to exactly 1 body child", () => {
+      const result = checkStructuralDelta(10, 1);
+      assert.equal(result.ok, true);
+    });
+
+    it("allows edit that drops below 50% (no longer enforced)", () => {
+      const result = checkStructuralDelta(10, 2);
+      assert.equal(result.ok, true);
+    });
+
+    it("rejects edit that adds more than MAX_ELEMENTS_ADDED", () => {
+      const result = checkStructuralDelta(0, MAX_ELEMENTS_ADDED + 1);
+      assert.equal(result.ok, false);
+    });
+  });
+
+  describe("countBodyChildren", () => {
+    it("counts children inside <body>", () => {
+      const html = "<!DOCTYPE html><html><head></head><body><h1>a</h1><p>b</p><p>c</p></body></html>";
+      assert.equal(countBodyChildren(html), 3);
+    });
+
+    it("returns 0 for empty body", () => {
+      const html = "<!DOCTYPE html><html><head></head><body></body></html>";
+      assert.equal(countBodyChildren(html), 0);
     });
   });
 

@@ -1,7 +1,7 @@
 import DOMPurify from "isomorphic-dompurify";
 
 export const MAX_ELEMENTS_ADDED = 50;
-export const MAX_ELEMENTS_DROPPED_RATIO = 0.5;
+export const MIN_BODY_CHILDREN = 1;
 
 const ALLOWED_TAGS: ReadonlyArray<string> = [
   "h1", "h2", "h3", "h4", "h5", "h6",
@@ -72,8 +72,8 @@ export function checkStructuralDelta(priorCount: number, newCount: number): { ok
   if (added > MAX_ELEMENTS_ADDED) {
     return { ok: false, reason: `edit adds ${added} elements (max ${MAX_ELEMENTS_ADDED})` };
   }
-  if (priorCount > 0 && newCount < priorCount * MAX_ELEMENTS_DROPPED_RATIO) {
-    return { ok: false, reason: `edit drops below 50% of prior element count` };
+  if (newCount < MIN_BODY_CHILDREN) {
+    return { ok: false, reason: `edit would leave page with no content` };
   }
   return { ok: true };
 }

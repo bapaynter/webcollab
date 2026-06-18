@@ -76,9 +76,7 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
       }
       return await runCreatePipeline(deps, message, targetPath, slugResult.value.path, ipHash);
     }
-    if (slugResult.reason.includes("depth")) {
-      return { status: "rejected", reason: slugResult.reason };
-    }
+    return { status: "rejected", reason: `could not determine new page path: ${slugResult.reason}` };
   }
 
   return await runEditPipeline(deps, message, targetPath, ipHash);
@@ -138,6 +136,10 @@ async function runEditPipeline(
     return { status: "rejected", reason: executorResult.reason };
   }
   const sanitized = sanitizeHTML(executorResult.html);
+  if (!looksLikeHtmlDocument(sanitized)) {
+    console.error("runEditPipeline: sanitized output is not an HTML document", { targetPath, sanitized });
+    return { status: "rejected", reason: "executor returned non-HTML content" };
+  }
   const sanitizedPrior = sanitizeHTML(page.current_html);
   const structuralCheck = checkStructuralDelta(
     countBodyChildren(sanitizedPrior),
@@ -290,4 +292,9 @@ function normalizePath(raw: string): string {
     return `/${raw}`;
   }
   return raw;
+}
+
+function looksLikeHtmlDocument(content: string): boolean {
+  const lower = content.toLowerCase();
+  return lower.includes("<html") && lower.includes("<body");
 }

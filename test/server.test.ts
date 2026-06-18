@@ -1,10 +1,10 @@
 import { describe, it, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { buildServer, type ServerHandle } from "../src/server.js";
-import { createPage } from "../src/pages.js";
+import { createPage, updatePageHtml } from "../src/pages.js";
 import { CONTENT_SECURITY_POLICY } from "../src/seed.js";
 import { hashIp } from "../src/rateLimit.js";
-import { listEdits } from "../src/edits.js";
+import { listEdits, recordEdit } from "../src/edits.js";
 
 describe("server", () => {
   const handles: ServerHandle[] = [];
@@ -447,6 +447,129 @@ describe("server", () => {
       };
       handle.broadcast({ type: "edit", path: "/", version: 1, summary: "test" });
       assert.equal(called, true);
+    });
+  });
+
+  describe("POST /api/rollback", () => {
+    it("rolls back 1 version by default", () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const page = handle.db.prepare("SELECT id FROM pages WHERE path = '/'").get() as { id: number };
+      updatePageHtml(handle.db, page.id, "<!DOCTYPE html><html><body><main><p>v1</p></main></body></html>");
+      recordEdit(handle.db, {
+        page_id: page.id,
+        version: 1,
+        user_suggestion: "x",
+        validator_reasoning: null,
+        validator_change_summary: "x",
+        previous_html: "<!DOCTYPE html><html><body><main><p>v0</p></main></body></html>",
+        new_html: "<!DOCTYPE html><html><body><main><p>v1</p></main></body></html>",
+        ip_hash: "h",
+      });
+      updatePageHtml(handle.db, page.id, "<!DOCTYPE html><html><body><main><p>v2</p></main></body></html>");
+      recordEdit(handle.db, {
+        page_id: page.id,
+        version: 2,
+        user_suggestion: "x",
+        validator_reasoning: null,
+        validator_change_summary: "x",
+        previous_html: "<!DOCTYPE html><html><body><main><p>v1</p></main></body></html>",
+        new_html: "<!DOCTYPE html><html><body><main><p>v2</p></main></body></html>",
+        ip_hash: "h",
+      });
+      const response = handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/" },
+      });
+      return Promise.resolve(response).then((res) => {
+        assert.equal(res.statusCode, 200, `body: ${res.body}`);
+        const body = JSON.parse(res.body) as { status: string; version: number };
+        assert.equal(body.status, "ok");
+        assert.equal(body.version, 1);
+      });
+    });
+
+    it("rolls back N versions when versions is provided", () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const page = handle.db.prepare("SELECT id FROM pages WHERE path = '/'").get() as { id: number };
+      for (const v of [1, 2, 3]) {
+        updatePageHtml(handle.db, page.id, `<!DOCTYPE html><html><body><main><p>v${v}</p></main></body></html>`);
+        recordEdit(handle.db, {
+          page_id: page.id,
+          version: v,
+          user_suggestion: `s${v}`,
+          validator_reasoning: null,
+          validator_change_summary: `s${v}`,
+          previous_html: `<!DOCTYPE html><html><body><main><p>v${v - 1}</p></main></body></html>`,
+          new_html: `<!DOCTYPE html><html><body><main><p>v${v}</p></main></body></html>`,
+          ip_hash: "h",
+        });
+      }
+      const response = handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/", versions: 3 },
+      });
+      return Promise.resolve(response).then((res) => {
+        assert.equal(res.statusCode, 200, `body: ${res.body}`);
+        const body = JSON.parse(res.body) as { status: string; version: number };
+        assert.equal(body.version, 0);
+      });
+    });
+
+    it("returns 400 when path is missing", () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: {},
+      });
+      return Promise.resolve(response).then((res) => {
+        assert.equal(res.statusCode, 400);
+      });
+    });
+
+    it("returns 404 for unknown page", () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/nope" },
+      });
+      return Promise.resolve(response).then((res) => {
+        assert.equal(res.statusCode, 404);
+      });
+    });
+
+    it("toSeed: true resets to seed version", () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const page = handle.db.prepare("SELECT id FROM pages WHERE path = '/'").get() as { id: number };
+      updatePageHtml(handle.db, page.id, "<p>broken</p>");
+      recordEdit(handle.db, {
+        page_id: page.id,
+        version: 1,
+        user_suggestion: "x",
+        validator_reasoning: null,
+        validator_change_summary: "x",
+        previous_html: "<!DOCTYPE html><html><body><main><h1>Canvas</h1></main></body></html>",
+        new_html: "<p>broken</p>",
+        ip_hash: "h",
+      });
+      const response = handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/", toSeed: true },
+      });
+      return Promise.resolve(response).then((res) => {
+        assert.equal(res.statusCode, 200, `body: ${res.body}`);
+        const body = JSON.parse(res.body) as { status: string; version: number };
+        assert.equal(body.version, 0);
+      });
     });
   });
 });

@@ -3,6 +3,7 @@ import websocket from "@fastify/websocket";
 import { initDb, type Database } from "./db.js";
 import { getPageByPath, listPages } from "./pages.js";
 import { listRecentEdits, listRecentEditsForPage } from "./edits.js";
+import { rollbackPage, rollbackToSeed } from "./rollback.js";
 import { injectBodyMargin, injectPaperCss, injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
 import { ensureSeed } from "./seedInit.js";
 import { readFile } from "node:fs/promises";
@@ -159,6 +160,48 @@ export function buildServer(options: ServerOptions): ServerHandle {
     reply.code(422);
     return result;
   });
+
+  fastify.post<{ Body: { path?: string; versions?: number; toSeed?: boolean } }>(
+    "/api/rollback",
+    async (request, reply) => {
+      const body = request.body ?? {};
+      const adminToken = process.env["CANVAS_ADMIN_TOKEN"];
+      if (typeof adminToken === "string" && adminToken.length > 0) {
+        const auth = request.headers.authorization ?? "";
+        const presented = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+        if (presented !== adminToken) {
+          reply.code(401);
+          return { error: "unauthorized" };
+        }
+      }
+      const pagePath = body.path ?? "";
+      if (pagePath === "") {
+        reply.code(400);
+        return { error: "path required" };
+      }
+      const page = getPageByPath(db, pagePath);
+      if (page === null) {
+        reply.code(404);
+        return { error: "page not found" };
+      }
+      try {
+        if (body.toSeed === true) {
+          rollbackToSeed(db, pagePath);
+        } else {
+          const editsToUndo = typeof body.versions === "number" ? body.versions : 1;
+          rollbackPage(db, pagePath, editsToUndo);
+        }
+      } catch (err) {
+        reply.code(422);
+        return { error: (err as Error).message };
+      }
+      const after = getPageByPath(db, pagePath);
+      if (after !== null) {
+        broadcast({ type: "edit", path: pagePath, version: after.version, summary: "rollback" });
+      }
+      return { status: "ok", path: pagePath, version: after?.version ?? null };
+    },
+  );
 
   fastify.register(async (scope) => {
     scope.get("/ws", { websocket: true }, (socket, _request) => {
