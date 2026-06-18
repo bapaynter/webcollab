@@ -41,6 +41,7 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 };
 
 export const WIDGET_SCRIPT_TAG = '<script src="/widget.js" defer></script>';
+export const PAPER_CSS_TAG = '<link rel="stylesheet" href="/paper.min.css">';
 
 export function injectWidgetScript(html: string): string {
   if (html.includes("</head>")) {
@@ -50,4 +51,17 @@ export function injectWidgetScript(html: string): string {
     return html.replace("<body>", `<body>${WIDGET_SCRIPT_TAG}`);
   }
   return `${WIDGET_SCRIPT_TAG}${html}`;
+}
+
+export function injectPaperCss(html: string): string {
+  if (html.includes("paper.min.css")) {
+    return html;
+  }
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${PAPER_CSS_TAG}</head>`);
+  }
+  if (html.includes("<body>")) {
+    return html.replace("<body>", `<body>${PAPER_CSS_TAG}`);
+  }
+  return `${PAPER_CSS_TAG}${html}`;
 }

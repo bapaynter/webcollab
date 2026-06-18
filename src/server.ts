@@ -3,7 +3,7 @@ import websocket from "@fastify/websocket";
 import { initDb, type Database } from "./db.js";
 import { getPageByPath, listPages } from "./pages.js";
 import { listRecentEdits, listRecentEditsForPage } from "./edits.js";
-import { injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
+import { injectPaperCss, injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
 import { ensureSeed } from "./seedInit.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -204,7 +204,7 @@ async function servePage(
     reply.type("text/plain");
     return "Not Found";
   }
-  const html = injectWidgetScript(page.current_html);
+  const html = injectWidgetScript(injectPaperCss(page.current_html));
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     reply.header(header, value);
   }

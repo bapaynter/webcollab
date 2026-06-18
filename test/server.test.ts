@@ -3,6 +3,8 @@ import { strict as assert } from "node:assert";
 import { buildServer, type ServerHandle } from "../src/server.js";
 import { createPage } from "../src/pages.js";
 import { CONTENT_SECURITY_POLICY } from "../src/seed.js";
+import { hashIp } from "../src/rateLimit.js";
+import { listEdits } from "../src/edits.js";
 
 describe("server", () => {
   const handles: ServerHandle[] = [];
@@ -49,6 +51,27 @@ describe("server", () => {
       createPage(handle.db, "/foo", "<main>hi</main>");
       const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
       assert.match(response.body, /<script src="\/widget\.js"[^>]*><\/script>/);
+    });
+
+    it("injects paper.min.css link into served page when missing", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<!DOCTYPE html><html><head></head><body><main>hi</main></body></html>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      assert.match(response.body, /<link rel="stylesheet" href="\/paper\.min\.css">/);
+    });
+
+    it("does not duplicate paper.min.css link when already present", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(
+        handle.db,
+        "/foo",
+        '<!DOCTYPE html><html><head><link rel="stylesheet" href="/paper.min.css"></head><body><main>hi</main></body></html>',
+      );
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      const matches = response.body.match(/paper\.min\.css/g) ?? [];
+      assert.equal(matches.length, 1, `expected exactly 1 paper.min.css reference, found ${matches.length}: ${response.body}`);
     });
 
     it("applies Content-Security-Policy header", async () => {
@@ -266,6 +289,65 @@ describe("server", () => {
       assert.equal(response.statusCode, 422);
       const body = JSON.parse(response.body) as { reason: string };
       assert.match(body.reason, /exists/);
+    });
+
+    it("records the actual user IP hash in the edits log, not 0.0.0.0", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        ipHashSalt: "a".repeat(64),
+        callExecutor: async () =>
+          JSON.stringify({
+            parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          }),
+      });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<!DOCTYPE html><html><body></body></html>");
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a gallery", path: "/foo" },
+      });
+      assert.equal(response.statusCode, 200, `body: ${response.body}`);
+      const salt = "a".repeat(64);
+      const expectedHash = hashIp(salt, "127.0.0.1");
+      const fakeHash = hashIp(salt, "0.0.0.0");
+      const fooPage = handle.db.prepare("SELECT id FROM pages WHERE path = '/foo'").get() as { id: number };
+      const fooEdits = listEdits(handle.db, fooPage.id);
+      assert.ok(fooEdits.length > 0, "parent page should have an edit record");
+      for (const edit of fooEdits) {
+        assert.notEqual(edit.ip_hash, fakeHash, "edit ip_hash should not be the fake 0.0.0.0");
+        assert.equal(edit.ip_hash, expectedHash, "edit ip_hash should match the request IP");
+      }
+    });
+
+    it("rolls back parent update if new page insert fails (atomic create)", async () => {
+      const initialParentHtml = "<!DOCTYPE html><html><body><p>original</p></body></html>";
+      const newParentHtml = '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>';
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callExecutor: async () => {
+          createPage(handle.db, "/foo/gallery", "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>");
+          return JSON.stringify({
+            parent_html: newParentHtml,
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          });
+        },
+      });
+      handles.push(handle);
+      createPage(handle.db, "/foo", initialParentHtml);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a gallery", path: "/foo" },
+      });
+      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      const fooPage = handle.db.prepare("SELECT current_html, version FROM pages WHERE path = '/foo'").get() as {
+        current_html: string;
+        version: number;
+      };
+      assert.equal(fooPage.current_html, initialParentHtml, "parent html must be unchanged on rollback");
+      assert.equal(fooPage.version, 0, "parent version must not be bumped on rollback");
     });
   });
 

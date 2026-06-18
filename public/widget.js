@@ -7,10 +7,14 @@
   const LOG_ID = "canvas-log";
   const FORM_ID = "canvas-form";
   const INPUT_ID = "canvas-input";
+  const SUBMIT_ID = "canvas-submit";
   const WS_PATH = "/ws";
   const SUGGEST_PATH = "/api/suggest";
   const RECONNECT_DELAY_MS = 2000;
   const LOG_KEY_PREFIX = "canvas-log:";
+  const MAX_MESSAGE_LENGTH = 500;
+  const INPUT_MIN_ROWS = 1;
+  const INPUT_MAX_ROWS = 8;
 
   function currentPath() {
     return window.location.pathname || "/";
@@ -65,20 +69,50 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = [
-      "#canvas-fab{position:fixed;right:1rem;bottom:1rem;width:3rem;height:3rem;border-radius:50%;border:0;background:#41403e;color:#fff;font-size:1.25rem;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:2147483600;font-family:system-ui,sans-serif}",
-      "#canvas-panel{position:fixed;right:1rem;bottom:5rem;width:20rem;max-width:90vw;max-height:70vh;background:#fff;border:1px solid #cdcccb;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:none;flex-direction:column;z-index:2147483600;font-family:system-ui,sans-serif;font-size:0.875rem;color:#272625}",
+      "@keyframes canvas-spin{to{transform:rotate(360deg)}}",
+      "#canvas-fab{position:fixed;right:1rem;bottom:1rem;width:3rem;height:3rem;border-radius:50%;border:0;background:#41403e;color:#fff;font-size:1.25rem;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:2147483600;font-family:system-ui,sans-serif;transition:transform 0.15s ease,background 0.15s ease}",
+      "#canvas-fab:hover{background:#5a5854;transform:scale(1.05)}",
+      "#canvas-fab:focus-visible{outline:2px solid #7a99c7;outline-offset:2px}",
+      "#canvas-panel{position:fixed;right:1rem;bottom:5rem;width:22rem;max-width:90vw;max-height:75vh;background:#fffbf2;border:1px solid #cdcccb;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);display:none;flex-direction:column;z-index:2147483600;font-family:system-ui,sans-serif;font-size:0.875rem;color:#272625;overflow:hidden}",
       "#canvas-panel.open{display:flex}",
-      "#canvas-panel header{padding:0.5rem 0.75rem;border-bottom:1px solid #cdcccb;background:#f2f2f2;font-weight:600;border-radius:6px 6px 0 0}",
-      "#canvas-log{flex:1;overflow-y:auto;padding:0.5rem 0.75rem;display:flex;flex-direction:column;gap:0.25rem}",
-      ".canvas-log-entry{padding:0.25rem 0.5rem;border-radius:4px;line-height:1.3}",
-      ".canvas-log-accepted{background:#d5dfc8;color:#4a5a35}",
-      ".canvas-log-rejected{background:#f0cbc9;color:#7f2722}",
-      ".canvas-log-info{background:#e6e7e9;color:#6c757d}",
-      "#canvas-form{display:flex;gap:0.25rem;padding:0.5rem;border-top:1px solid #cdcccb}",
-      "#canvas-input{flex:1;padding:0.4rem 0.5rem;border:1px solid #cdcccb;border-radius:4px;font:inherit}",
-      "#canvas-form button{padding:0.4rem 0.75rem;border:0;background:#41403e;color:#fff;border-radius:4px;cursor:pointer;font:inherit}",
+      "#canvas-panel header{padding:0.625rem 0.875rem;border-bottom:1px solid #e3e1de;background:#f2f0ea;font-weight:600;font-size:0.8125rem;letter-spacing:0.02em;text-transform:uppercase;color:#5a5854;border-radius:10px 10px 0 0}",
+      "#canvas-log{flex:1;overflow-y:auto;padding:0.625rem 0.875rem;display:flex;flex-direction:column;gap:0.375rem;min-height:3rem}",
+      "#canvas-log:empty::before{content:\"no suggestions yet\";color:#a09d97;font-style:italic;font-size:0.8125rem}",
+      ".canvas-log-entry{padding:0.4rem 0.625rem;border-radius:6px;line-height:1.35;font-size:0.8125rem;border-left:3px solid transparent}",
+      ".canvas-log-accepted{background:#e8efd9;color:#3a4a25;border-left-color:#7a9a4a}",
+      ".canvas-log-rejected{background:#f3dad7;color:#7f2722;border-left-color:#c2544a}",
+      ".canvas-log-info{background:#ece9e2;color:#6c757d;border-left-color:#a09d97}",
+      "#canvas-form{display:flex;gap:0.5rem;padding:0.625rem 0.75rem;border-top:1px solid #e3e1de;background:#fbf9f4;align-items:flex-end}",
+      "#canvas-input{flex:1;padding:0.5rem 0.625rem;border:1px solid #cdcccb;border-radius:6px;font:inherit;background:#fff;color:inherit;resize:none;min-height:1.75rem;max-height:12rem;line-height:1.4;box-sizing:border-box;transition:border-color 0.15s ease,box-shadow 0.15s ease;overflow-y:auto}",
+      "#canvas-input:focus{outline:0;border-color:#7a99c7;box-shadow:0 0 0 2px rgba(122,153,199,0.18)}",
+      "#canvas-input:disabled{opacity:0.6;cursor:not-allowed}",
+      "#canvas-submit{padding:0.5rem 0.875rem;border:0;background:#41403e;color:#fff;border-radius:6px;cursor:pointer;font:inherit;font-weight:500;height:2.25rem;position:relative;transition:background 0.15s ease,transform 0.05s ease;min-width:4.5rem}",
+      "#canvas-submit:hover:not(:disabled){background:#5a5854}",
+      "#canvas-submit:active:not(:disabled){transform:scale(0.97)}",
+      "#canvas-submit:focus-visible{outline:2px solid #7a99c7;outline-offset:2px}",
+      "#canvas-submit:disabled{cursor:wait;opacity:0.85}",
+      "#canvas-submit::after{content:\"\";display:none;position:absolute;top:50%;left:50%;width:0.875rem;height:0.875rem;margin:-0.4375rem 0 0 -0.4375rem;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:canvas-spin 0.7s linear infinite}",
+      "#canvas-form.canvas-pending #canvas-submit::after{display:block}",
+      "#canvas-form.canvas-pending #canvas-submit #canvas-submit-label{display:none}",
     ].join("");
     (document.head || document.documentElement).appendChild(style);
+  }
+
+  function autoSizeInput() {
+    const input = document.getElementById(INPUT_ID);
+    if (input === null) return;
+    input.style.height = "auto";
+    const lineHeight = 1.4;
+    const padding = 1;
+    const maxHeight = INPUT_MAX_ROWS * lineHeight + padding;
+    input.style.height = Math.min(input.scrollHeight, maxHeight) + "px";
+  }
+
+  function resetInput() {
+    const input = document.getElementById(INPUT_ID);
+    if (input === null) return;
+    input.value = "";
+    autoSizeInput();
   }
 
   function ensurePanel() {
@@ -87,17 +121,39 @@
     panel = document.createElement("div");
     panel.id = PANEL_ID;
     panel.innerHTML = [
-      "<header>canvas</header>",
+      "<header>canvas · suggest a change</header>",
       '<div id="canvas-log"></div>',
       '<form id="canvas-form">',
-      '<input id="canvas-input" type="text" maxlength="500" placeholder="suggest a change…" autocomplete="off">',
-      "<button type=\"submit\">send</button>",
+      '<textarea id="canvas-input" rows="' + INPUT_MIN_ROWS + '" maxlength="' + MAX_MESSAGE_LENGTH + '" placeholder="suggest a change…" autocomplete="off"></textarea>',
+      '<button id="canvas-submit" type="submit"><span id="canvas-submit-label">send</span></button>',
       "</form>",
     ].join("");
     (document.body || document.documentElement).appendChild(panel);
     restoreLog();
-    panel.querySelector("#" + FORM_ID).addEventListener("submit", onSubmit);
+    const form = panel.querySelector("#" + FORM_ID);
+    const input = panel.querySelector("#" + INPUT_ID);
+    form.addEventListener("submit", onSubmit);
+    input.addEventListener("input", onInputChange);
+    input.addEventListener("keydown", onInputKeydown);
     return panel;
+  }
+
+  function onInputChange() {
+    autoSizeInput();
+  }
+
+  function onInputKeydown(event) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      const form = document.getElementById(FORM_ID);
+      if (form !== null) {
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+        } else {
+          form.dispatchEvent(new Event("submit", { cancelable: true }));
+        }
+      }
+    }
   }
 
   function togglePanel() {
@@ -109,13 +165,32 @@
     }
   }
 
+  function setPending(pending) {
+    const form = document.getElementById(FORM_ID);
+    const input = document.getElementById(INPUT_ID);
+    const button = document.getElementById(SUBMIT_ID);
+    const label = document.getElementById("canvas-submit-label");
+    if (form === null || input === null || button === null || label === null) return;
+    if (pending) {
+      form.classList.add("canvas-pending");
+      input.disabled = true;
+      button.disabled = true;
+      label.textContent = "sending";
+    } else {
+      form.classList.remove("canvas-pending");
+      input.disabled = false;
+      button.disabled = false;
+      label.textContent = "send";
+    }
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
     const input = document.getElementById(INPUT_ID);
     if (input === null) return;
     const message = input.value.trim();
     if (message.length === 0) return;
-    input.disabled = true;
+    setPending(true);
     try {
       const response = await fetch(SUGGEST_PATH, {
         method: "POST",
@@ -125,7 +200,7 @@
       const body = await response.json().catch(() => ({}));
       if (response.status === 200 && body.status === "accepted") {
         appendLog("accepted", "✓ v" + body.version + ": " + (body.summary || "(no summary)"));
-        input.value = "";
+        resetInput();
       } else {
         const reason = body.reason || ("error " + response.status);
         appendLog("rejected", "✗ " + reason);
@@ -137,7 +212,7 @@
       console.error("canvas widget: suggest failed", err);
       appendLog("rejected", "✗ network error");
     } finally {
-      input.disabled = false;
+      setPending(false);
     }
   }
 
@@ -156,7 +231,7 @@
     fab = document.createElement("button");
     fab.id = FAB_ID;
     fab.type = "button";
-    fab.setAttribute("aria-label", "open canvas chat");
+    fab.setAttribute("aria-label", "toggle canvas chat");
     fab.textContent = "✎";
     fab.addEventListener("click", togglePanel);
     (document.body || document.documentElement).appendChild(fab);
@@ -194,6 +269,12 @@
     const form = document.getElementById(FORM_ID);
     if (form !== null) {
       form.addEventListener("submit", onSubmit);
+    }
+    const input = document.getElementById(INPUT_ID);
+    if (input !== null) {
+      input.addEventListener("input", onInputChange);
+      input.addEventListener("keydown", onInputKeydown);
+      autoSizeInput();
     }
   }
 
@@ -268,8 +349,10 @@
 
   function mount() {
     injectStyle();
+    const panel = ensurePanel();
     ensureFab();
-    ensurePanel();
+    panel.classList.add("open");
+    autoSizeInput();
     connect();
   }
 
