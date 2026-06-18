@@ -202,4 +202,104 @@ describe("end-to-end", () => {
       assert.equal(res.status, 422);
     });
   });
+
+  describe("defense in depth", () => {
+    it("strips <script> injected via executor response (LLM jailbreak simulation)", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "added script",
+            elements_estimated: 2,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () =>
+          "<!DOCTYPE html><html><body><main><h1>x</h1><script>alert(1)</script></main></body></html>",
+      });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "change the heading to say Welcome", path: "/" }),
+      });
+      assert.equal(res.status, 200);
+      const pageRes = await fetch(`http://127.0.0.1:${port}/api/page?path=/`);
+      const pageBody = (await pageRes.json()) as { html: string };
+      assert.ok(!/<script/i.test(pageBody.html), "script tag should be stripped by sanitizer");
+    });
+
+    it("strips onclick handler injected via executor", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "added onclick",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () =>
+          "<!DOCTYPE html><html><body><main><h1 onclick=\"alert(1)\">x</h1></main></body></html>",
+      });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "change the heading to say Welcome", path: "/" }),
+      });
+      const pageRes = await fetch(`http://127.0.0.1:${port}/api/page?path=/`);
+      const pageBody = (await pageRes.json()) as { html: string };
+      if (res.status === 200) {
+        assert.ok(!/onclick/i.test(pageBody.html), "onclick should be stripped by sanitizer");
+      } else {
+        assert.ok(!/onclick/i.test(pageBody.html), "page must not contain onclick even after rejection");
+      }
+    });
+
+    it("rejects new page that exceeds MAX_PAGE_DEPTH", async () => {
+      const handle = buildServer({ dbPath: ":memory:", maxPageDepth: 2 });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "add a gallery", path: "/a/b" }),
+      });
+      assert.equal(res.status, 422);
+      const body = (await res.json()) as { reason: string };
+      assert.match(body.reason, /depth|not found/);
+    });
+
+    it("rejects new page without a same-edit link to it", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callExecutor: async () =>
+          JSON.stringify({
+            parent_html: "<!DOCTYPE html><html><body><main><h1>x</h1></main></body></html>",
+            new_html: "<!DOCTYPE html><html><body><main><h1>Gallery</h1></main></body></html>",
+          }),
+      });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "add a gallery", path: "/" }),
+      });
+      assert.equal(res.status, 422);
+      const body = (await res.json()) as { reason: string };
+      assert.match(body.reason, /anchor/);
+    });
+  });
 });
