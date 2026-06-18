@@ -148,6 +148,27 @@
     }
   }
 
+  function parseSuggestError(body, status) {
+    const userMessage = body && typeof body.user_message === "string" ? body.user_message : fallbackErrorMessage(status);
+    const hint = body && typeof body.hint === "string" ? body.hint : fallbackErrorHint(status);
+    return { userMessage: userMessage, hint: hint };
+  }
+
+  function fallbackErrorMessage(status) {
+    if (status === 400) return "request is invalid";
+    if (status === 422) return "request was rejected";
+    if (status === 429) return "too many requests right now";
+    if (status === 504) return "edit timed out before completion";
+    if (status >= 500) return "server error";
+    return "request failed";
+  }
+
+  function fallbackErrorHint(status) {
+    if (status === 504) return "try a smaller edit request";
+    if (status >= 500) return "please retry in a moment";
+    return "";
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
     const input = document.getElementById(INPUT_ID);
@@ -166,15 +187,19 @@
         appendLog("accepted", "✓ v" + body.version + ": " + (body.summary || "(no summary)"));
         resetInput();
       } else {
-        const reason = body.reason || ("error " + response.status);
-        appendLog("rejected", "✗ " + reason);
+        const parsedError = parseSuggestError(body, response.status);
+        appendLog("rejected", "✗ " + parsedError.userMessage);
+        if (parsedError.hint !== "") {
+          appendLog("info", parsedError.hint);
+        }
         if (response.status === 429 && typeof body.until === "string") {
           showCooldownUntil(body.until);
         }
       }
     } catch (err) {
       console.error("canvas widget: suggest failed", err);
-      appendLog("rejected", "✗ network error");
+      appendLog("rejected", "✗ network error while sending request");
+      appendLog("info", "check connection and retry");
     } finally {
       setPending(false);
     }

@@ -255,6 +255,16 @@ describe("server", () => {
         payload: { message: "" },
       });
       assert.equal(response.statusCode, 400);
+      const body = JSON.parse(response.body) as {
+        status: string;
+        code: string;
+        user_message: string;
+        retryable: boolean;
+      };
+      assert.equal(body.status, "rejected");
+      assert.equal(body.code, "EMPTY_MESSAGE");
+      assert.match(body.user_message, /empty/i);
+      assert.equal(body.retryable, false);
     });
 
     it("does not enforce cooldown when rateLimitEnabled is false (default)", async () => {
@@ -316,6 +326,16 @@ describe("server", () => {
         payload: { message: "second", path: "/" },
       });
       assert.equal(second.statusCode, 429, `body: ${second.body}`);
+      const body = JSON.parse(second.body) as {
+        code: string;
+        user_message: string;
+        retryable: boolean;
+        retry_after_seconds?: number;
+      };
+      assert.equal(body.code, "COOLDOWN_ACTIVE");
+      assert.match(body.user_message, /too many requests/i);
+      assert.equal(body.retryable, true);
+      assert.equal(typeof body.retry_after_seconds, "number");
     });
 
     it("returns 422 on pre-LLM blocklist hit", async () => {
@@ -395,8 +415,16 @@ describe("server", () => {
         payload: { message: "update intro text", path: "/" },
       });
       assert.equal(response.statusCode, 422, `body: ${response.body}`);
-      const body = JSON.parse(response.body) as { reason: string };
+      const body = JSON.parse(response.body) as {
+        reason: string;
+        code: string;
+        user_message: string;
+        retryable: boolean;
+      };
       assert.match(body.reason, /patch conflict/i);
+      assert.equal(body.code, "PATCH_CONFLICT");
+      assert.match(body.user_message, /page changed/i);
+      assert.equal(body.retryable, true);
     });
 
     it("rejects 422 when executor returns HTML-wrapped CREATE payload (page stays clean)", async () => {

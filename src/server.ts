@@ -44,6 +44,23 @@ export interface BroadcastEvent {
   readonly summary: string;
 }
 
+interface SuggestRejectedResult {
+  readonly status: "rejected";
+  readonly reason: string;
+  readonly until?: string;
+}
+
+interface SuggestErrorPayload {
+  readonly status: "rejected";
+  readonly reason: string;
+  readonly until?: string;
+  readonly code: string;
+  readonly user_message: string;
+  readonly hint?: string;
+  readonly retryable: boolean;
+  readonly retry_after_seconds?: number;
+}
+
 export function buildServer(options: ServerOptions): ServerHandle {
   const db = initDb(options.dbPath);
   ensureSeed(db, "/");
@@ -146,20 +163,21 @@ export function buildServer(options: ServerOptions): ServerHandle {
     if (result.status === "accepted") {
       return result;
     }
+    const payload = buildSuggestErrorPayload(result);
     if (
       result.reason === "empty message" ||
       result.reason === "message too long (>500 chars)" ||
       result.reason.startsWith("invalid path")
     ) {
       reply.code(400);
-      return result;
+      return payload;
     }
     if (result.reason === "cooldown active") {
       reply.code(429);
-      return result;
+      return payload;
     }
     reply.code(422);
-    return result;
+    return payload;
   });
 
   fastify.post<{ Body: { path?: string; versions?: number; toSeed?: boolean } }>(
@@ -241,6 +259,223 @@ export function buildServer(options: ServerOptions): ServerHandle {
       db.close();
     },
   };
+}
+
+function buildSuggestErrorPayload(rejected: SuggestRejectedResult): SuggestErrorPayload {
+  const base = {
+    status: "rejected" as const,
+    reason: rejected.reason,
+    until: rejected.until,
+  };
+
+  if (rejected.reason === "empty message") {
+    return {
+      ...base,
+      code: "EMPTY_MESSAGE",
+      user_message: "Message is empty.",
+      hint: "Type what you want to change, then send.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason === "message too long (>500 chars)") {
+    return {
+      ...base,
+      code: "MESSAGE_TOO_LONG",
+      user_message: "Message is too long.",
+      hint: "Keep request under 500 characters.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason.startsWith("invalid path")) {
+    return {
+      ...base,
+      code: "INVALID_PATH",
+      user_message: "This page path cannot be edited.",
+      hint: "Try editing a normal page path like / or /foo.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason === "cooldown active") {
+    const retryAfterSeconds = computeRetryAfterSeconds(rejected.until);
+    return {
+      ...base,
+      code: "COOLDOWN_ACTIVE",
+      user_message: "Too many requests right now.",
+      hint: "Wait for cooldown, then try again.",
+      retryable: true,
+      retry_after_seconds: retryAfterSeconds,
+    };
+  }
+
+  if (rejected.reason === "blocked by content policy") {
+    return {
+      ...base,
+      code: "BLOCKED_BY_POLICY",
+      user_message: "Request blocked by safety policy.",
+      hint: "Remove script-like or unsafe instructions and retry.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason === "page not found") {
+    return {
+      ...base,
+      code: "PAGE_NOT_FOUND",
+      user_message: "Page not found.",
+      hint: "Open an existing page path and try again.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason === "path already exists") {
+    return {
+      ...base,
+      code: "PATH_ALREADY_EXISTS",
+      user_message: "That page path already exists.",
+      hint: "Try a different page name.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason.startsWith("depth cap exceeded")) {
+    return {
+      ...base,
+      code: "DEPTH_CAP_EXCEEDED",
+      user_message: "That path is too deep.",
+      hint: "Create the new page closer to the site root.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason.startsWith("could not determine new page path")) {
+    return {
+      ...base,
+      code: "NEW_PAGE_PATH_UNCLEAR",
+      user_message: "Could not determine new page path.",
+      hint: "Name the page directly, like 'create page /gallery'.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason.startsWith("patch conflict:")) {
+    return {
+      ...base,
+      code: "PATCH_CONFLICT",
+      user_message: "Page changed before edit could be applied.",
+      hint: "Refresh page and retry the request.",
+      retryable: true,
+    };
+  }
+
+  if (rejected.reason === "validator unavailable" || rejected.reason === "executor unavailable") {
+    return {
+      ...base,
+      code: "UPSTREAM_UNAVAILABLE",
+      user_message: "Edit service is temporarily unavailable.",
+      hint: "Try again in a moment.",
+      retryable: true,
+    };
+  }
+
+  if (rejected.reason === "validator returned malformed response" || rejected.reason === "executor returned malformed response") {
+    return {
+      ...base,
+      code: "UPSTREAM_MALFORMED_RESPONSE",
+      user_message: "Edit service returned invalid output.",
+      hint: "Try again shortly.",
+      retryable: true,
+    };
+  }
+
+  if (rejected.reason === "executor returned CREATE payload for EDIT request") {
+    return {
+      ...base,
+      code: "EXECUTOR_MODE_MISMATCH",
+      user_message: "Edit output format was invalid.",
+      hint: "Try the request again.",
+      retryable: true,
+    };
+  }
+
+  if (rejected.reason === "executor returned non-HTML content") {
+    return {
+      ...base,
+      code: "EXECUTOR_NON_HTML",
+      user_message: "Edit output was not valid HTML.",
+      hint: "Try a smaller, clearer request.",
+      retryable: true,
+    };
+  }
+
+  if (rejected.reason.startsWith("edit adds ")) {
+    return {
+      ...base,
+      code: "EDIT_TOO_LARGE",
+      user_message: "Requested edit is too large.",
+      hint: "Split change into smaller steps.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason === "edit would leave page with no content") {
+    return {
+      ...base,
+      code: "EDIT_WOULD_EMPTY_PAGE",
+      user_message: "Edit would remove all page content.",
+      hint: "Keep at least one visible element in the page body.",
+      retryable: false,
+    };
+  }
+
+  if (rejected.reason.includes("no anchor to ")) {
+    return {
+      ...base,
+      code: "MISSING_LINK_TO_NEW_PAGE",
+      user_message: "New page must be linked from current page.",
+      hint: "Include a link to the new page in the same request.",
+      retryable: false,
+    };
+  }
+
+  if (
+    rejected.reason.startsWith("internal:") ||
+    rejected.reason.startsWith("commit failed:") ||
+    rejected.reason === "parent page not found"
+  ) {
+    return {
+      ...base,
+      code: "INTERNAL_ERROR",
+      user_message: "Server failed to apply edit.",
+      hint: "Try again in a moment.",
+      retryable: true,
+    };
+  }
+
+  return {
+    ...base,
+    code: "REQUEST_REJECTED",
+    user_message: "Edit request was rejected.",
+    hint: "Try a smaller or clearer request.",
+    retryable: false,
+  };
+}
+
+function computeRetryAfterSeconds(until?: string): number | undefined {
+  if (until === undefined || until === "") {
+    return undefined;
+  }
+  const untilMs = Date.parse(until);
+  if (Number.isNaN(untilMs)) {
+    return undefined;
+  }
+  const remainingMs = untilMs - Date.now();
+  if (remainingMs <= 0) {
+    return 0;
+  }
+  return Math.ceil(remainingMs / 1000);
 }
 
 export async function readPublicFile(name: string): Promise<string> {
