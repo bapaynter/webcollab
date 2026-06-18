@@ -297,9 +297,22 @@ describe("server", () => {
   });
 
   describe("POST /api/suggest (creates)", () => {
+    function validatorSaysCreate(slug: string): () => Promise<string> {
+      return async () =>
+        JSON.stringify({
+          allowed: true,
+          reason: "ok",
+          change_summary: "create new page",
+          elements_estimated: 1,
+          is_new_page: true,
+          new_page_slug: slug,
+        });
+    }
+
     it("creates a new page and links to it from the parent", async () => {
       const handle = buildServer({
         dbPath: ":memory:",
+        callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
             parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
@@ -321,6 +334,7 @@ describe("server", () => {
     it("rejects when link-guard fails (no anchor in parent)", async () => {
       const handle = buildServer({
         dbPath: ":memory:",
+        callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
             parent_html: "<!DOCTYPE html><html><body></body></html>",
@@ -338,7 +352,10 @@ describe("server", () => {
     });
 
     it("rejects depth cap exceeded", async () => {
-      const handle = buildServer({ dbPath: ":memory:" });
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: validatorSaysCreate("extra"),
+      });
       handles.push(handle);
       createPage(handle.db, "/a/b/c/d", "<!DOCTYPE html><html><body></body></html>");
       const response = await handle.fastify.inject({
@@ -354,6 +371,7 @@ describe("server", () => {
     it("rejects path already exists", async () => {
       const handle = buildServer({
         dbPath: ":memory:",
+        callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
             parent_html: '<!DOCTYPE html><html><body><a href="/foo">x</a></body></html>',
@@ -377,6 +395,7 @@ describe("server", () => {
       const handle = buildServer({
         dbPath: ":memory:",
         ipHashSalt: "a".repeat(64),
+        callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
             parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
@@ -408,6 +427,7 @@ describe("server", () => {
       const newParentHtml = '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>';
       const handle = buildServer({
         dbPath: ":memory:",
+        callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () => {
           createPage(handle.db, "/foo/gallery", "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>");
           return JSON.stringify({

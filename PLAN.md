@@ -40,7 +40,7 @@ A public website where anyone can suggest small, LLM-mediated changes to a page 
 - Adding new elements (text, images via `https:` URLs, headings, lists, links to existing `pages.path` values via relative or `/`-prefixed paths).
 - Modifying text content, classes, ids, `alt`/`title`/`style`, ARIA attributes of existing elements.
 - Reordering child elements within a single parent.
-- Creating a new page by inferring a slug from the message. The same accepted edit must add a working `<a href="<new-path>">link text</a>` to the current page pointing at the new page. The new page's path is the current page's path plus `/` plus the inferred slug. An explicit `/<absolute>` slug in the message is treated as relative (leading `/` stripped).
+- Creating a new page when the validator classifies the suggestion as a new page (see Section 8.1). The validator returns `new_page_slug`; the system builds the new page's path as the current page's path plus `/` plus the slug. The same accepted edit must add a working `<a href="<new-path>">link text</a>` to the current page pointing at the new page. An explicit `/<absolute>` slug from the validator is treated as relative (leading `/` stripped).
 
 ### Not Allowed
 
@@ -78,8 +78,7 @@ Fastify server (Node 20)
   ├─ rateLimit.checkCooldown (per-IP, env-tunable)
   ├─ pathPolicy.checkDepth   (cap; rejects over-depth before any LLM call)
   ├─ pageResolver.resolve    (load current page HTML; for new-page suggestions, load parent HTML)
-  ├─ slugInfer.extract       (deterministic, LLM-free; see Section 8.1)
-  ├─ validator.validate      (cheap LLM, JSON-mode; confirms new page + same-edit link if applicable)
+  ├─ validator.validate      (cheap LLM, JSON-mode; classifies EDIT vs CREATE, infers new_page_slug if applicable — see Section 8.1)
   ├─ executor.apply          (capable LLM; returns full HTML; for creates, returns parent + new)
   ├─ sanitize.sanitizeHTML   (DOMPurify, hard allowlist; runs on every page touched)
   ├─ linkGuard.verify        (post-sanitize: confirm <a> to new path exists in parent)
@@ -256,13 +255,16 @@ The endpoint enforces cooldown *before* the LLM is called (no cost on rate-limit
 
 ## 8. Client Widget
 
-### 8.1 Slug inference (server-side, deterministic, LLM-free)
+### 8.1 EDIT vs CREATE classification (server-side, LLM-driven)
 
-`slugInfer.extract(message, currentPath)`:
-- If the message contains an explicit token matching `/[a-z0-9-]+/`, use it. Leading `/` is stripped; the result is appended to `currentPath`.
-- Otherwise, look for a phrase after verbs like "make", "create", "add a page for/about", "a gallery called X". Slugify: lowercase, keep `[a-z0-9]+` runs, join with `-`, max 32 chars, strip leading/trailing dashes.
-- Reject if no slug can be inferred, or if `currentPath + '/' + slug` would exceed `MAX_PAGE_DEPTH`.
-- The validator LLM can veto a proposed slug; the executor decides the link's anchor text.
+The validator LLM is the **sole routing authority** for distinguishing an edit to the current page from a new page creation. It returns `is_new_page: boolean` and (when true) `new_page_slug: string | null`. Words like "add", "create", "make", "new" alone do **not** trigger the create pipeline — they commonly describe edits to the current page ("add a heading", "create a friendlier vibe"). The validator is explicitly instructed to default to EDIT when ambiguous.
+
+Slug resolution for creates (in order):
+1. If `new_page_slug` is a valid `[a-z0-9-]+` string, use it (leading `/` stripped; result appended to `currentPath`).
+2. Otherwise fall back to `slugInfer.extract(message, currentPath)` — same deterministic patterns as before (explicit `/<slug>` token, or verb phrases like "add a gallery", "make a thing called X").
+3. Reject if no slug can be inferred, or if `currentPath + '/' + slug` would exceed `MAX_PAGE_DEPTH`.
+
+The validator's `change_summary` is passed to both pipelines (replacing the inline "added a new page" stub). The executor decides the link's anchor text.
 
 ### 8.2 Widget behavior
 
@@ -432,14 +434,13 @@ For "add a gallery to this page" sent from `/foo`:
 
 1. Client: `POST /api/suggest { message: "add a gallery", path: "/foo" }`.
 2. Server: `pathPolicy.checkDepth("/foo")` passes. `pageResolver.resolve("/foo")` loads current HTML.
-3. Server: `slugInfer.extract("add a gallery", "/foo")` → slug `gallery`, candidate path `/foo/gallery`.
-4. Server: `pathPolicy.checkDepth("/foo/gallery")` — if it exceeds `MAX_PAGE_DEPTH`, reject with `422 "depth cap exceeded"` before any LLM call.
-5. Server: validator LLM receives current HTML of `/foo` + proposed change. Confirms small, nondestructive, and that a same-edit link to `/foo/gallery` will be added.
-6. Server: executor LLM returns `{ kind: "create", parent_path: "/foo", new_path: "/foo/gallery", parent_html: <new HTML of /foo with link>, new_html: <seed HTML of /foo/gallery> }`.
-7. Server: `sanitize.sanitizeHTML` runs on both. `linkGuard.verify(parent_html, "/foo/gallery")` confirms an `<a href>` resolving to `/foo/gallery` exists in the sanitized parent. If not, reject.
-8. Server: transaction writes parent (version N+1) and new page (version 1), records two `edits` rows.
-9. Server: emits two WS events.
-10. Clients: a user on `/foo` fetches `/api/page?path=/foo` and swaps `<html>` in place — the new link appears. A user on `/` silently refetches `/api/state` and discards.
+3. Server: validator LLM receives current HTML of `/foo` + proposed change. Returns `{ allowed: true, is_new_page: true, new_page_slug: "gallery", change_summary: "..." }`.
+4. Server: builds candidate path `/foo/gallery` from LLM slug (or falls back to `slugInfer.extract` if LLM slug is null/invalid). If depth exceeds `MAX_PAGE_DEPTH`, reject with `422 "depth cap exceeded"`.
+5. Server: executor LLM returns `{ kind: "create", parent_path: "/foo", new_path: "/foo/gallery", parent_html: <new HTML of /foo with link>, new_html: <seed HTML of /foo/gallery> }`.
+6. Server: `sanitize.sanitizeHTML` runs on both. `linkGuard.verify(parent_html, "/foo/gallery")` confirms an `<a href>` resolving to `/foo/gallery` exists in the sanitized parent. If not, reject.
+7. Server: transaction writes parent (version N+1) and new page (version 1), records two `edits` rows.
+8. Server: emits two WS events.
+9. Clients: a user on `/foo` fetches `/api/page?path=/foo` and swaps `<html>` in place — the new link appears. A user on `/` silently refetches `/api/state` and discards.
 
 ---
 

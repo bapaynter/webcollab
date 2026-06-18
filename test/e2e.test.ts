@@ -90,8 +90,17 @@ describe("end-to-end", () => {
         '<!DOCTYPE html><html><body><main><h1>x</h1><p>Suggest a change in the chat.</p><a href="/gallery">Gallery</a></main></body></html>',
       new_html: "<!DOCTYPE html><html><body><main><h1>Gallery</h1></main></body></html>",
     });
+    const validatorResponse = JSON.stringify({
+      allowed: true,
+      reason: "ok",
+      change_summary: "create new page",
+      elements_estimated: 1,
+      is_new_page: true,
+      new_page_slug: "gallery",
+    });
     const handle = buildServer({
       dbPath: ":memory:",
+      callLLM: async () => validatorResponse,
       callExecutor: async () => executorResponse,
     });
     handles.push(handle);
@@ -283,6 +292,15 @@ describe("end-to-end", () => {
     it("rejects new page without a same-edit link to it", async () => {
       const handle = buildServer({
         dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "create new page",
+            elements_estimated: 1,
+            is_new_page: true,
+            new_page_slug: "gallery",
+          }),
         callExecutor: async () =>
           JSON.stringify({
             parent_html: "<!DOCTYPE html><html><body><main><h1>x</h1></main></body></html>",

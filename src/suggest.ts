@@ -67,43 +67,11 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
     recordAttempt(deps.db, ipHash, deps.cooldownMinutes);
   }
 
-  if (impliesNewPage(message)) {
-    const slugResult = extractSlug(message, targetPath);
-    if (slugResult.ok) {
-      const depthCheck = checkDepth(slugResult.value.path);
-      if (!depthCheck.ok) {
-        return { status: "rejected", reason: depthCheck.reason };
-      }
-      return await runCreatePipeline(deps, message, targetPath, slugResult.value.path, ipHash);
-    }
-    return { status: "rejected", reason: `could not determine new page path: ${slugResult.reason}` };
-  }
-
-  return await runEditPipeline(deps, message, targetPath, ipHash);
-}
-
-const NEW_PAGE_CUE_PATTERN =
-  /\b(?:create|make(?:\s+a)?|new\s+page|add\s+a)\b|\bcalled\s+|\/(?:[a-z0-9-]+)\b/i;
-
-const EDIT_CUE_PATTERN = /\b(?:change|update|modify|set|replace|edit|remove|delete)\b|\bto\s+(?:say|be|read)\b/i;
-
-function impliesNewPage(message: string): boolean {
-  if (EDIT_CUE_PATTERN.test(message)) {
-    return false;
-  }
-  return NEW_PAGE_CUE_PATTERN.test(message);
-}
-
-async function runEditPipeline(
-  deps: SuggestDeps,
-  message: string,
-  targetPath: string,
-  ipHash: string,
-): Promise<SuggestResponse> {
   const page = getPageByPath(deps.db, targetPath);
   if (page === null) {
     return { status: "rejected", reason: "page not found" };
   }
+
   const validatorResult = await validate(
     {
       apiKey: deps.apiKey,
@@ -121,6 +89,49 @@ async function runEditPipeline(
   if (!validatorResult.allowed) {
     return { status: "rejected", reason: validatorResult.reason };
   }
+
+  if (validatorResult.is_new_page) {
+    const slugResolution = resolveNewPagePath(validatorResult.new_page_slug, message, targetPath);
+    if (!slugResolution.ok) {
+      return { status: "rejected", reason: slugResolution.reason };
+    }
+    return await runCreatePipeline(deps, message, targetPath, slugResolution.path, validatorResult.change_summary, ipHash);
+  }
+
+  return await runEditPipeline(deps, message, page, targetPath, validatorResult.change_summary, ipHash);
+}
+
+function resolveNewPagePath(
+  llmSlug: string | null,
+  message: string,
+  targetPath: string,
+): { ok: true; path: string } | { ok: false; reason: string } {
+  if (llmSlug !== null && llmSlug.trim() !== "") {
+    const cleanSlug = llmSlug.replace(/^\/+/, "").trim();
+    if (cleanSlug !== "" && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(cleanSlug)) {
+      const candidate = targetPath === "/" ? `/${cleanSlug}` : `${targetPath}/${cleanSlug}`;
+      const depthCheck = checkDepth(candidate);
+      if (!depthCheck.ok) {
+        return { ok: false, reason: depthCheck.reason };
+      }
+      return { ok: true, path: candidate };
+    }
+  }
+  const fallback = extractSlug(message, targetPath);
+  if (!fallback.ok) {
+    return { ok: false, reason: `could not determine new page path: ${fallback.reason}` };
+  }
+  return { ok: true, path: fallback.value.path };
+}
+
+async function runEditPipeline(
+  deps: SuggestDeps,
+  message: string,
+  page: import("./pages.js").Page,
+  targetPath: string,
+  changeSummary: string,
+  ipHash: string,
+): Promise<SuggestResponse> {
   const executorResult = await applyEdit(
     {
       apiKey: deps.apiKey,
@@ -148,7 +159,7 @@ async function runEditPipeline(
   if (!structuralCheck.ok) {
     return { status: "rejected", reason: structuralCheck.reason };
   }
-  return await commitEdit(deps, targetPath, page.id, page.current_html, sanitized, message, validatorResult.change_summary, ipHash);
+  return await commitEdit(deps, targetPath, page.id, page.current_html, sanitized, message, changeSummary, ipHash);
 }
 
 async function runCreatePipeline(
@@ -156,6 +167,7 @@ async function runCreatePipeline(
   message: string,
   parentPath: string,
   newPath: string,
+  changeSummary: string,
   ipHash: string,
 ): Promise<SuggestResponse> {
   if (pageExists(deps.db, newPath)) {
@@ -196,7 +208,7 @@ async function runCreatePipeline(
     sanitizedParent,
     sanitizedNew,
     message,
-    "added a new page",
+    changeSummary,
     ipHash,
   );
 }
