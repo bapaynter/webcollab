@@ -74,6 +74,27 @@ describe("server", () => {
       assert.equal(matches.length, 1, `expected exactly 1 paper.min.css reference, found ${matches.length}: ${response.body}`);
     });
 
+    it("injects default body margin style when missing", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<!DOCTYPE html><html><head></head><body><main>hi</main></body></html>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      assert.match(response.body, /<style[^>]*canvas-body-margin[^>]*>body\{margin[^}]*\}<\/style>/);
+    });
+
+    it("does not duplicate body margin style when already present", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(
+        handle.db,
+        "/foo",
+        '<!DOCTYPE html><html><head><style>#canvas-body-margin{margin:2rem}</style></head><body><main>hi</main></body></html>',
+      );
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      const matches = response.body.match(/canvas-body-margin/g) ?? [];
+      assert.equal(matches.length, 1, `expected exactly 1 canvas-body-margin reference, found ${matches.length}: ${response.body}`);
+    });
+
     it("applies Content-Security-Policy header", async () => {
       const handle = buildServer({ dbPath: ":memory:" });
       handles.push(handle);

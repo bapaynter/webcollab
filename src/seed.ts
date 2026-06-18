@@ -42,6 +42,7 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
 
 export const WIDGET_SCRIPT_TAG = '<script src="/widget.js" defer></script>';
 export const PAPER_CSS_TAG = '<link rel="stylesheet" href="/paper.min.css">';
+export const DEFAULT_BODY_MARGIN_TAG = '<style id="canvas-body-margin">body{margin:2rem}</style>';
 
 export function injectWidgetScript(html: string): string {
   if (html.includes("</head>")) {
@@ -64,4 +65,17 @@ export function injectPaperCss(html: string): string {
     return html.replace("<body>", `<body>${PAPER_CSS_TAG}`);
   }
   return `${PAPER_CSS_TAG}${html}`;
+}
+
+export function injectBodyMargin(html: string): string {
+  if (html.includes("canvas-body-margin")) {
+    return html;
+  }
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${DEFAULT_BODY_MARGIN_TAG}</head>`);
+  }
+  if (html.includes("<body>")) {
+    return html.replace("<body>", `<body>${DEFAULT_BODY_MARGIN_TAG}`);
+  }
+  return `${DEFAULT_BODY_MARGIN_TAG}${html}`;
 }
