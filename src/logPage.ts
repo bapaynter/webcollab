@@ -1,6 +1,7 @@
 import type { Database } from "./db.js";
 import { listPages, type Page } from "./pages.js";
 import { listAllEdits, type FullEdit } from "./edits.js";
+import { listAllLLMFailures, type LLMFailureRecord } from "./llmFailures.js";
 
 const DOCTYPE_TAG = "<!DOCTYPE html>";
 
@@ -47,9 +48,23 @@ function renderEditsTable(edits: ReadonlyArray<FullEdit>): string {
   return `<table class="log-table"><thead><tr><th>When</th><th>Page</th><th>Ver</th><th>Summary</th><th>Suggestion</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function renderLLMFailuresTable(failures: ReadonlyArray<LLMFailureRecord>): string {
+  if (failures.length === 0) {
+    return "<p>No LLM failures yet.</p>";
+  }
+  const rows = failures
+    .map(
+      (failure) =>
+        `<tr><td>${escapeHtml(formatTimestamp(failure.created_at))}</td><td>${escapeHtml(failure.stage)}</td><td>${escapeHtml(failure.model)}</td><td><a href="${escapeHtml(failure.path)}">${escapeHtml(failure.path)}</a></td><td>${escapeHtml(failure.reason)}</td><td>${escapeHtml(failure.user_suggestion)}</td><td>${escapeHtml(failure.detail ?? "")}</td></tr>`,
+    )
+    .join("");
+  return `<table class="log-table"><thead><tr><th>When</th><th>Stage</th><th>Model</th><th>Path</th><th>Reason</th><th>Suggestion</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
 export function renderLogPage(db: Database): string {
   const pages = listPages(db);
   const edits = listAllEdits(db);
+  const llmFailures = listAllLLMFailures(db);
   return `${DOCTYPE_TAG}
 <html lang="en">
 <head>
@@ -76,6 +91,10 @@ ${renderPagesTable(pages)}
 <div class="log-section">
 <h2>Edits (${edits.length})</h2>
 ${renderEditsTable(edits)}
+</div>
+<div class="log-section">
+<h2>LLM Failures (${llmFailures.length})</h2>
+${renderLLMFailuresTable(llmFailures)}
 </div>
 </main>
 </body>

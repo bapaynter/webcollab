@@ -36,6 +36,17 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   total_rejected INTEGER DEFAULT 0,
   flagged       INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS llm_failures (
+  id            INTEGER PRIMARY KEY,
+  stage         TEXT NOT NULL,
+  model         TEXT NOT NULL,
+  path          TEXT NOT NULL,
+  user_suggestion TEXT NOT NULL,
+  reason        TEXT NOT NULL,
+  detail        TEXT,
+  created_at    TEXT NOT NULL
+);
 `;
 
 export function initDb(path: string): Database {

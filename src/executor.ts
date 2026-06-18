@@ -60,10 +60,10 @@ export interface ExecutorDeps {
   readonly callLLM: (options: CallOptions) => Promise<string>;
 }
 
-export type EditResult = { ok: true; html: string; previousHtml: string } | { ok: false; reason: string };
+export type EditResult = { ok: true; html: string; previousHtml: string } | { ok: false; reason: string; detail?: string };
 export type CreateResult =
   | { ok: true; parent_html: string; new_html: string }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; detail?: string };
 
 type LoadLatestHtml = () => Promise<string | null>;
 
@@ -88,7 +88,7 @@ export async function applyEdit(
     });
   } catch (err) {
     console.error("executor.applyEdit: LLM call failed", err);
-    return { ok: false, reason: "executor unavailable" };
+    return { ok: false, reason: "executor unavailable", detail: formatErrorDetail(err) };
   }
   const html = stripCodeFences(raw);
   if (isCreatePayload(html)) {
@@ -137,17 +137,17 @@ export async function applyCreate(
     });
   } catch (err) {
     console.error("executor.applyCreate: LLM call failed", err);
-    return { ok: false, reason: "executor unavailable" };
+    return { ok: false, reason: "executor unavailable", detail: formatErrorDetail(err) };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(stripCodeFences(raw));
   } catch (err) {
     console.error("executor.applyCreate: LLM response was not JSON", err);
-    return { ok: false, reason: "executor returned malformed response" };
+    return { ok: false, reason: "executor returned malformed response", detail: truncateDetail(raw) };
   }
   if (!isCreateResponse(parsed)) {
-    return { ok: false, reason: "executor returned malformed response" };
+    return { ok: false, reason: "executor returned malformed response", detail: truncateDetail(raw) };
   }
   return { ok: true, parent_html: parsed.parent_html, new_html: parsed.new_html };
 }
@@ -480,4 +480,19 @@ async function resolveLatestHtml(currentHtml: string, loadLatestHtml?: LoadLates
     console.error("executor.applyEdit: failed to load latest html", err);
     return null;
   }
+}
+
+function formatErrorDetail(err: unknown): string {
+  if (err instanceof Error) {
+    return truncateDetail(err.message);
+  }
+  return truncateDetail(String(err));
+}
+
+function truncateDetail(detail: string): string {
+  const MAX_DETAIL_LENGTH = 300;
+  if (detail.length <= MAX_DETAIL_LENGTH) {
+    return detail;
+  }
+  return detail.slice(0, MAX_DETAIL_LENGTH);
 }

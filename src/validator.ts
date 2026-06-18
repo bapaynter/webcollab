@@ -63,9 +63,9 @@ export interface ValidatorDeps {
 }
 
 export type ValidatorResult =
-  | { ok: true; allowed: true; reason: string; change_summary: string; is_new_page: boolean; new_page_slug: string | null }
-  | { ok: true; allowed: false; reason: string; change_summary: string; is_new_page: boolean; new_page_slug: string | null }
-  | { ok: false; reason: string };
+  | { ok: true; allowed: true; reason: string; change_summary: string; is_new_page: boolean; new_page_slug: string | null; detail?: string }
+  | { ok: true; allowed: false; reason: string; change_summary: string; is_new_page: boolean; new_page_slug: string | null; detail?: string }
+  | { ok: false; reason: string; detail?: string };
 
 export interface ValidatorParsed {
   readonly allowed: boolean;
@@ -96,17 +96,33 @@ export async function validate(
     });
   } catch (err) {
     console.error("validator: LLM call failed", err);
-    return { ok: false, reason: "validator unavailable" };
+    return { ok: false, reason: "validator unavailable", detail: formatErrorDetail(err) };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
     console.error("validator: LLM response was not JSON", err);
-    return { ok: true, allowed: false, reason: "validator returned malformed response", change_summary: "", is_new_page: false, new_page_slug: null };
+    return {
+      ok: true,
+      allowed: false,
+      reason: "validator returned malformed response",
+      change_summary: "",
+      is_new_page: false,
+      new_page_slug: null,
+      detail: truncateDetail(raw),
+    };
   }
   if (!isParsed(parsed)) {
-    return { ok: true, allowed: false, reason: "validator returned malformed response", change_summary: "", is_new_page: false, new_page_slug: null };
+    return {
+      ok: true,
+      allowed: false,
+      reason: "validator returned malformed response",
+      change_summary: "",
+      is_new_page: false,
+      new_page_slug: null,
+      detail: truncateDetail(raw),
+    };
   }
   if (!parsed.allowed) {
     return { ok: true, allowed: false, reason: parsed.reason, change_summary: parsed.change_summary, is_new_page: parsed.is_new_page, new_page_slug: parsed.new_page_slug };
@@ -148,4 +164,19 @@ function isParsed(value: unknown): value is ValidatorParsed {
     typeof v["is_new_page"] === "boolean" &&
     (v["new_page_slug"] === null || typeof v["new_page_slug"] === "string")
   );
+}
+
+function formatErrorDetail(err: unknown): string {
+  if (err instanceof Error) {
+    return truncateDetail(err.message);
+  }
+  return truncateDetail(String(err));
+}
+
+function truncateDetail(detail: string): string {
+  const MAX_DETAIL_LENGTH = 300;
+  if (detail.length <= MAX_DETAIL_LENGTH) {
+    return detail;
+  }
+  return detail.slice(0, MAX_DETAIL_LENGTH);
 }

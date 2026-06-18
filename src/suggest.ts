@@ -8,6 +8,7 @@ import { checkDepth, validatePathFormat } from "./pathPolicy.js";
 import { createPage, getPageByPath, pageExists, updatePageHtml } from "./pages.js";
 import { recordEdit } from "./edits.js";
 import { verify as verifyLink } from "./linkGuard.js";
+import { recordLLMFailure, type LLMFailureStage } from "./llmFailures.js";
 
 export interface SuggestDeps {
   readonly db: import("./db.js").Database;
@@ -84,9 +85,11 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
     targetPath,
   );
   if (!validatorResult.ok) {
+    maybeRecordLLMFailure(deps, "validator", deps.validatorModel, targetPath, message, validatorResult.reason, validatorResult.detail);
     return { status: "rejected", reason: validatorResult.reason };
   }
   if (!validatorResult.allowed) {
+    maybeRecordLLMFailure(deps, "validator", deps.validatorModel, targetPath, message, validatorResult.reason, validatorResult.detail);
     return { status: "rejected", reason: validatorResult.reason };
   }
 
@@ -151,6 +154,15 @@ async function runEditPipeline(
     },
   );
   if (!executorResult.ok) {
+    maybeRecordLLMFailure(
+      deps,
+      "executor_edit",
+      deps.executorModel,
+      targetPath,
+      message,
+      executorResult.reason,
+      executorResult.detail,
+    );
     return { status: "rejected", reason: executorResult.reason };
   }
   if (isCreatePayload(executorResult.html)) {
@@ -218,6 +230,15 @@ async function runCreatePipeline(
     newPath,
   );
   if (!createResult.ok) {
+    maybeRecordLLMFailure(
+      deps,
+      "executor_create",
+      deps.executorModel,
+      parentPath,
+      message,
+      createResult.reason,
+      createResult.detail,
+    );
     return { status: "rejected", reason: createResult.reason };
   }
   const sanitizedParent = sanitizeHTML(createResult.parent_html);
@@ -337,4 +358,35 @@ function normalizePath(raw: string): string {
 function looksLikeHtmlDocument(content: string): boolean {
   const lower = content.toLowerCase();
   return lower.includes("<html") && lower.includes("<body");
+}
+
+function maybeRecordLLMFailure(
+  deps: SuggestDeps,
+  stage: LLMFailureStage,
+  model: string,
+  path: string,
+  message: string,
+  reason: string,
+  detail?: string,
+): void {
+  if (!isLLMFailureReason(reason)) {
+    return;
+  }
+  recordLLMFailure(deps.db, {
+    stage,
+    model,
+    path,
+    user_suggestion: message,
+    reason,
+    detail: detail ?? null,
+  });
+}
+
+function isLLMFailureReason(reason: string): boolean {
+  return (
+    reason === "validator unavailable" ||
+    reason === "validator returned malformed response" ||
+    reason === "executor unavailable" ||
+    reason === "executor returned malformed response"
+  );
 }

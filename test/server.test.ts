@@ -5,6 +5,7 @@ import { createPage, updatePageHtml } from "../src/pages.js";
 import { CONTENT_SECURITY_POLICY } from "../src/seed.js";
 import { hashIp } from "../src/rateLimit.js";
 import { listEdits, recordEdit } from "../src/edits.js";
+import { listAllLLMFailures } from "../src/llmFailures.js";
 
 describe("server", () => {
   const handles: ServerHandle[] = [];
@@ -243,6 +244,27 @@ describe("server", () => {
       assert.ok(!/<script>alert\(1\)<\/script>/.test(response.body), "raw script must not appear in log");
       assert.ok(response.body.includes("&lt;script&gt;"), "script must be escaped");
     });
+
+    it("includes llm failure rows", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () => {
+          throw new Error("upstream 503 from validator");
+        },
+      });
+      handles.push(handle);
+      const suggestResponse = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "change heading", path: "/" },
+      });
+      assert.equal(suggestResponse.statusCode, 422, `body: ${suggestResponse.body}`);
+      const response = await handle.fastify.inject({ method: "GET", url: "/log" });
+      assert.equal(response.statusCode, 200);
+      assert.ok(response.body.includes("LLM Failures (1)"), "should include llm failure section count");
+      assert.ok(response.body.includes("validator unavailable"), "should include failure reason");
+      assert.ok(response.body.includes("change heading"), "should include suggestion text");
+    });
   });
 
   describe("POST /api/suggest (edits)", () => {
@@ -380,6 +402,55 @@ describe("server", () => {
       assert.match(body.user_message, /classifier/i);
       assert.equal(body.hint, classifierReason);
       assert.equal(body.reason, classifierReason);
+    });
+
+    it("records validator unavailable in llm_failures", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        validatorModel: "validator-test-model",
+        callLLM: async () => {
+          throw new Error("upstream validator 503");
+        },
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "please edit", path: "/" },
+      });
+      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      const failures = listAllLLMFailures(handle.db);
+      assert.equal(failures.length, 1);
+      assert.equal(failures[0]?.stage, "validator");
+      assert.equal(failures[0]?.model, "validator-test-model");
+      assert.equal(failures[0]?.path, "/");
+      assert.equal(failures[0]?.reason, "validator unavailable");
+      assert.equal(failures[0]?.user_suggestion, "please edit");
+      assert.match(failures[0]?.detail ?? "", /503/);
+    });
+
+    it("does not record classifier rejections in llm_failures", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: false,
+            reason: "request appears to ask for forbidden structure",
+            change_summary: "",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "do risky thing", path: "/" },
+      });
+      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      const failures = listAllLLMFailures(handle.db);
+      assert.equal(failures.length, 0);
     });
 
     it("returns 200 on accepted edit, bumps page version, writes edit log", async () => {
