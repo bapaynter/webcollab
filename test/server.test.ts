@@ -86,4 +86,31 @@ describe("server", () => {
       assert.match(response.headers["content-type"] ?? "", /javascript/);
     });
   });
+
+  describe("GET /api/state", () => {
+    it("returns pages list and recent edits", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/", "<p>root</p>");
+      createPage(handle.db, "/foo", "<p>foo</p>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/api/state" });
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body) as { pages: Array<{ path: string }>; recent_edits: unknown[] };
+      assert.equal(body.pages.length, 2);
+      const paths = body.pages.map((p) => p.path).sort();
+      assert.deepEqual(paths, ["/", "/foo"]);
+    });
+
+    it("scoped to single path via ?path=", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/", "<p>root</p>");
+      createPage(handle.db, "/foo", "<p>foo</p>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/api/state?path=/foo" });
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body) as { path: string; version: number };
+      assert.equal(body.path, "/foo");
+      assert.equal(body.version, 0);
+    });
+  });
 });

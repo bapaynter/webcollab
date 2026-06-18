@@ -1,7 +1,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
 import { initDb, type Database } from "./db.js";
-import { getPageByPath } from "./pages.js";
+import { getPageByPath, listPages } from "./pages.js";
+import { listRecentEdits, listRecentEditsForPage } from "./edits.js";
 import { injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -63,6 +64,26 @@ export function buildServer(options: ServerOptions): ServerHandle {
     }
     reply.type("text/html; charset=utf-8");
     return html;
+  });
+
+  fastify.get("/api/state", async (request) => {
+    const query = request.query as { path?: string };
+    if (typeof query.path === "string" && query.path !== "") {
+      const page = getPageByPath(db, query.path);
+      if (page === null) {
+        return { error: "not found" };
+      }
+      return {
+        path: page.path,
+        version: page.version,
+        updated_at: page.updated_at,
+        recent_edits: listRecentEditsForPage(db, page.id, 10),
+      };
+    }
+    return {
+      pages: listPages(db).map((p) => ({ path: p.path, version: p.version, updated_at: p.updated_at })),
+      recent_edits: listRecentEdits(db, 10),
+    };
   });
 
   return {
