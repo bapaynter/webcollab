@@ -1,6 +1,13 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { sanitizeHTML, MAX_ELEMENTS_ADDED, MIN_BODY_CHILDREN, checkStructuralDelta, countBodyChildren } from "../src/sanitize.js";
+import {
+  sanitizeHTML,
+  MAX_ELEMENTS_ADDED,
+  MIN_BODY_CHILDREN,
+  MAX_CANVAS_SIZE_PX,
+  checkStructuralDelta,
+  countBodyChildren,
+} from "../src/sanitize.js";
 import { SEED_ROOT_HTML } from "../src/seed.js";
 
 describe("sanitize", () => {
@@ -66,6 +73,21 @@ describe("sanitize", () => {
       const out = sanitizeHTML('<p style="color: red; font-size: 1.5rem">hi</p>');
       assert.match(out, /style="[^"]*color:\s*red/);
       assert.match(out, /style="[^"]*font-size:\s*1\.5rem/);
+    });
+
+    it("preserves canvas and enforces max canvas bounds", () => {
+      const out = sanitizeHTML('<canvas width="8000" height="2000"></canvas>');
+      assert.match(out, /<canvas/);
+      assert.match(out, new RegExp(`style="[^"]*max-width:${MAX_CANVAS_SIZE_PX}px`));
+      assert.match(out, new RegExp(`style="[^"]*max-height:${MAX_CANVAS_SIZE_PX}px`));
+    });
+
+    it("caps oversized canvas style width and height", () => {
+      const out = sanitizeHTML('<canvas style="width:5000px;height:2500px"></canvas>');
+      assert.match(out, new RegExp(`style="[^"]*width:${MAX_CANVAS_SIZE_PX}px`));
+      assert.match(out, new RegExp(`style="[^"]*height:${MAX_CANVAS_SIZE_PX}px`));
+      assert.match(out, new RegExp(`style="[^"]*max-width:${MAX_CANVAS_SIZE_PX}px`));
+      assert.match(out, new RegExp(`style="[^"]*max-height:${MAX_CANVAS_SIZE_PX}px`));
     });
   });
 
