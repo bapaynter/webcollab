@@ -83,4 +83,51 @@ describe("end-to-end", () => {
   });
 
   void stubLLM;
+
+  it("new-page flow: creates new page, links from parent, emits two ws events", async () => {
+    const executorResponse = JSON.stringify({
+      parent_html:
+        '<!DOCTYPE html><html><body><main><h1>x</h1><p>Suggest a change in the chat.</p><a href="/gallery">Gallery</a></main></body></html>',
+      new_html: "<!DOCTYPE html><html><body><main><h1>Gallery</h1></main></body></html>",
+    });
+    const handle = buildServer({
+      dbPath: ":memory:",
+      callExecutor: async () => executorResponse,
+    });
+    handles.push(handle);
+    await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+    const address = handle.fastify.server.address();
+    if (typeof address !== "object" || address === null) throw new Error("no address");
+    const port = address.port;
+
+    const received: Array<{ type: string; path: string; version: number }> = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    await new Promise<void>((resolve, reject) => {
+      ws.once("open", () => resolve());
+      ws.once("error", reject);
+    });
+    ws.on("message", (data) => {
+      const parsed = JSON.parse(data.toString()) as { type: string; path: string; version: number };
+      received.push(parsed);
+    });
+
+    const suggestRes = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "add a gallery", path: "/" }),
+    });
+    const suggestBody = (await suggestRes.json()) as { status: string; path: string; version: number; reason: string };
+    assert.equal(suggestBody.status, "accepted", `body: ${JSON.stringify(suggestBody)}`);
+    assert.equal(suggestBody.path, "/");
+
+    await new Promise((r) => setTimeout(r, 50));
+    const paths = received.map((e) => e.path).sort();
+    assert.deepEqual(paths, ["/", "/gallery"]);
+
+    const newPageRes = await fetch(`http://127.0.0.1:${port}/api/page?path=/gallery`);
+    const newPageBody = (await newPageRes.json()) as { html: string };
+    assert.match(newPageBody.html, /Gallery/);
+
+    ws.close();
+  });
 });
