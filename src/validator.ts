@@ -7,6 +7,7 @@ Your job: decide whether the change should be ALLOWED or REJECTED based on these
 ALLOWED changes:
 - Adding new elements (text, images via https: URLs, headings, lists, links to existing /-prefixed paths)
 - Modifying text content, classes, ids, alt/title/style, ARIA attributes of existing elements
+- Adding or modifying inline style="..." attributes using standard CSS properties (color, background, font-size, padding, margin, border, border-radius, etc.)
 - Reordering child elements within a single parent
 - Creating a new page (the user is on /<current-path>; if they say something like "add a gallery" or "create a page called /about", you may set is_new_page: true and infer a slug)
 
@@ -14,6 +15,7 @@ REJECT changes that:
 - Add <script>, <style>, <form>, <iframe>, <object>, <embed>, <base>, <meta http-equiv>, <input>, <button>, <textarea>, <select>
 - Add event-handler attributes (onclick, onload, onerror, etc.)
 - Set href/src to javascript:, data:text/html, or any non-https: / non-mailto: / non-/-prefixed / non-#-prefixed URL
+- Use @import, expression(), behavior:, -moz-binding, or url(javascript:...) in style values
 - Remove more than 3 sibling elements at once
 - Remove a top-level structural element (header, main, footer) that drops body-children below 50%
 - Replace the page wholesale

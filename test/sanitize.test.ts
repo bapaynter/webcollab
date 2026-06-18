@@ -61,6 +61,29 @@ describe("sanitize", () => {
       assert.match(out, /<img/);
       assert.match(out, /src="https:\/\/example\.com\/x\.png"/);
     });
+
+    it("preserves inline style attribute on safe elements", () => {
+      const out = sanitizeHTML('<p style="color: red; font-size: 1.5rem">hi</p>');
+      assert.match(out, /style="[^"]*color:\s*red/);
+      assert.match(out, /style="[^"]*font-size:\s*1\.5rem/);
+    });
+  });
+
+  describe("inline style sanitization", () => {
+    it("strips javascript: URLs from style values", () => {
+      const out = sanitizeHTML('<p style="background: url(javascript:alert(1))">x</p>');
+      assert.ok(!/javascript:/i.test(out), `output: ${out}`);
+    });
+
+    it("strips expression() from style values", () => {
+      const out = sanitizeHTML('<p style="width: expression(alert(1))">x</p>');
+      assert.ok(!/expression\(/i.test(out), `output: ${out}`);
+    });
+
+    it("strips @import from style values", () => {
+      const out = sanitizeHTML('<p style="@import url(evil.css)">x</p>');
+      assert.ok(!/@import/i.test(out), `output: ${out}`);
+    });
   });
 
   describe("structural guards", () => {

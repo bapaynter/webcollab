@@ -14,7 +14,7 @@ const ALLOWED_TAGS: ReadonlyArray<string> = [
 ];
 
 const ALLOWED_ATTR: ReadonlyArray<string> = [
-  "href", "src", "alt", "title", "class", "id",
+  "href", "src", "alt", "title", "class", "id", "style",
   "aria-label", "aria-describedby", "aria-hidden", "role",
   "colspan", "rowspan",
   "charset", "name", "content", "rel", "media", "type", "sizes",
@@ -22,6 +22,15 @@ const ALLOWED_ATTR: ReadonlyArray<string> = [
 
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto):|#|\/)/i;
 const DATA_TEXT_HTML_PATTERN = /(<(?:a|img|source|video|audio|iframe)[^>]*?\s(?:href|src)\s*=\s*["']?)\s*data:text\/html[^"' >]*/gi;
+const STYLE_ATTR_PATTERN = /(<[^>]*?\sstyle\s*=\s*["'])([^"']*)(["'][^>]*>)/gi;
+const DANGEROUS_STYLE_TOKENS = /(?:javascript\s*:|expression\s*\(|@import|behavior\s*:|-moz-binding\s*:|-webkit-binding\s*:|url\s*\(\s*["']?\s*javascript\s*:)/gi;
+
+function sanitizeStyleValues(html: string): string {
+  return html.replace(STYLE_ATTR_PATTERN, (_match, prefix: string, value: string, suffix: string) => {
+    const cleaned = value.replace(DANGEROUS_STYLE_TOKENS, "");
+    return prefix + cleaned + suffix;
+  });
+}
 
 const DOCTYPE_TAG = "<!DOCTYPE html>";
 
@@ -35,7 +44,8 @@ export function sanitizeHTML(html: string): string {
     FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onchange", "onsubmit", "onkeydown", "onkeyup", "onkeypress", "http-equiv"],
     WHOLE_DOCUMENT: true,
   });
-  const stripped = sanitized.replace(DATA_TEXT_HTML_PATTERN, "$1");
+  const styleStripped = sanitizeStyleValues(sanitized);
+  const stripped = styleStripped.replace(DATA_TEXT_HTML_PATTERN, "$1");
   if (stripped.toLowerCase().startsWith("<html")) {
     return DOCTYPE_TAG + stripped;
   }
