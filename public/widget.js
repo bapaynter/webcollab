@@ -11,31 +11,12 @@
   const WS_PATH = "/ws";
   const SUGGEST_PATH = "/api/suggest";
   const RECONNECT_DELAY_MS = 2000;
-  const LOG_KEY_PREFIX = "canvas-log:";
   const MAX_MESSAGE_LENGTH = 500;
   const INPUT_MIN_ROWS = 1;
   const INPUT_MAX_ROWS = 8;
 
   function currentPath() {
     return window.location.pathname || "/";
-  }
-
-  function loadLog() {
-    try {
-      const raw = window.localStorage.getItem(LOG_KEY_PREFIX + currentPath());
-      return raw ? JSON.parse(raw) : [];
-    } catch (err) {
-      console.warn("canvas widget: failed to read localStorage log", err);
-      return [];
-    }
-  }
-
-  function saveLog(entries) {
-    try {
-      window.localStorage.setItem(LOG_KEY_PREFIX + currentPath(), JSON.stringify(entries));
-    } catch (err) {
-      console.warn("canvas widget: failed to write localStorage log", err);
-    }
   }
 
   function appendLog(status, text) {
@@ -46,22 +27,6 @@
     entry.textContent = text;
     log.appendChild(entry);
     log.scrollTop = log.scrollHeight;
-    const entries = loadLog();
-    entries.push({ status: status, text: text, t: Date.now() });
-    saveLog(entries.slice(-50));
-  }
-
-  function restoreLog() {
-    const entries = loadLog();
-    if (entries.length === 0) return;
-    for (const e of entries) {
-      const log = document.getElementById(LOG_ID);
-      if (log === null) break;
-      const div = document.createElement("div");
-      div.className = "canvas-log-entry canvas-log-" + e.status;
-      div.textContent = e.text;
-      log.appendChild(div);
-    }
   }
 
   function injectStyle() {
@@ -129,7 +94,6 @@
       "</form>",
     ].join("");
     (document.body || document.documentElement).appendChild(panel);
-    restoreLog();
     const form = panel.querySelector("#" + FORM_ID);
     const input = panel.querySelector("#" + INPUT_ID);
     form.addEventListener("submit", onSubmit);
