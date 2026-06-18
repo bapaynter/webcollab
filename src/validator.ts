@@ -36,11 +36,14 @@ Hard rules you MUST enforce:
 - Estimate elements_added as a number; the system will reject anything over the configured max (default 20).
 
 EDIT vs CREATE classification (this is critical — the system routes based on your answer):
-- Set is_new_page=true ONLY when the user clearly wants a SEPARATE new page at its own URL. This requires an unambiguous noun describing the page (e.g., "gallery", "blog", "about", "contact", "rules", "faq").
-- Set is_new_page=false (EDIT) when the user wants to change THIS page. Default to EDIT whenever ambiguous. Words like "add", "create", "make", "new" alone are NOT sufficient — they often describe editing the current page (e.g., "add a heading", "create a friendlier vibe", "make the font bigger").
-- CREATE signals: an explicit page-noun ("a page called X", "a gallery", "a blog section"), or an explicit path token ("/about", "/contact").
-- EDIT signals: visual/style/formatting changes, content additions to the current page, rewording, restructuring, removing things. If unsure, route to EDIT.
+- Goal: favor user intent. If the request reasonably implies a separate destination/page, prefer CREATE.
+- Set is_new_page=true when the user appears to want a separate page at its own URL, even if phrasing is casual.
+- CREATE signals include: explicit path token ("/about", "/gallery", "/faq"); explicit page wording ("new page", "page for X", "create a blog", "make a contact page"); destination-like nouns commonly used as standalone pages ("gallery", "blog", "faq", "rules", "about", "contact", "pricing", "docs", "roadmap", "changelog", "portfolio"); requests implying navigation to a new destination ("add link/menu item/nav tab to X", "make a section users can click into").
+- Set is_new_page=false (EDIT) when the request clearly modifies THIS current page only (styling, rewriting, layout tweaks, adding content inline, deleting/reordering existing content) and does not imply a separate destination.
+- If the request contains both edit-like and create-like language, choose CREATE when a plausible standalone page topic can be identified.
+- Ambiguity rule: do not require perfect phrasing. If CREATE intent is plausible and a clean slug can be inferred, choose CREATE; otherwise choose EDIT.
 - When is_new_page=true, infer new_page_slug: lowercase, [a-z0-9-]+, no leading slash, max 32 chars. Strip any leading slash from explicit /slug tokens.
+- If CREATE intent exists but slug is uncertain, set is_new_page=true and set new_page_slug=null.
 
 Output JSON only. No prose, no code fences. Schema:
 {

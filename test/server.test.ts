@@ -349,6 +349,39 @@ describe("server", () => {
       assert.equal(response.statusCode, 422);
     });
 
+    it("returns classifier reason in hint for validator rejections", async () => {
+      const classifierReason = "request appears to ask for forbidden structure";
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: false,
+            reason: classifierReason,
+            change_summary: "",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "do risky thing", path: "/" },
+      });
+      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      const body = JSON.parse(response.body) as {
+        code: string;
+        user_message: string;
+        hint: string;
+        reason: string;
+      };
+      assert.equal(body.code, "VALIDATOR_REJECTED");
+      assert.match(body.user_message, /classifier/i);
+      assert.equal(body.hint, classifierReason);
+      assert.equal(body.reason, classifierReason);
+    });
+
     it("returns 200 on accepted edit, bumps page version, writes edit log", async () => {
       const handle = buildServer({
         dbPath: ":memory:",

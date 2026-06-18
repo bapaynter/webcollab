@@ -440,6 +440,16 @@ function buildSuggestErrorPayload(rejected: SuggestRejectedResult): SuggestError
     };
   }
 
+  if (isClassifierRejectReason(rejected.reason)) {
+    return {
+      ...base,
+      code: "VALIDATOR_REJECTED",
+      user_message: "Request rejected by classifier.",
+      hint: rejected.reason,
+      retryable: false,
+    };
+  }
+
   if (
     rejected.reason.startsWith("internal:") ||
     rejected.reason.startsWith("commit failed:") ||
@@ -461,6 +471,64 @@ function buildSuggestErrorPayload(rejected: SuggestRejectedResult): SuggestError
     hint: "Try a smaller or clearer request.",
     retryable: false,
   };
+}
+
+function isClassifierRejectReason(reason: string): boolean {
+  if (reason === "empty message") {
+    return false;
+  }
+  if (reason === "message too long (>500 chars)") {
+    return false;
+  }
+  if (reason.startsWith("invalid path")) {
+    return false;
+  }
+  if (reason === "cooldown active") {
+    return false;
+  }
+  if (reason === "blocked by content policy") {
+    return false;
+  }
+  if (reason === "page not found") {
+    return false;
+  }
+  if (reason === "path already exists") {
+    return false;
+  }
+  if (reason.startsWith("depth cap exceeded")) {
+    return false;
+  }
+  if (reason.startsWith("could not determine new page path")) {
+    return false;
+  }
+  if (reason.startsWith("patch conflict:")) {
+    return false;
+  }
+  if (reason === "validator unavailable" || reason === "executor unavailable") {
+    return false;
+  }
+  if (reason === "validator returned malformed response" || reason === "executor returned malformed response") {
+    return false;
+  }
+  if (reason === "executor returned CREATE payload for EDIT request") {
+    return false;
+  }
+  if (reason === "executor returned non-HTML content") {
+    return false;
+  }
+  if (reason.startsWith("edit adds ")) {
+    return false;
+  }
+  if (reason === "edit would leave page with no content") {
+    return false;
+  }
+  if (reason.includes("no anchor to ")) {
+    return false;
+  }
+  if (reason.startsWith("internal:") || reason.startsWith("commit failed:") || reason === "parent page not found") {
+    return false;
+  }
+  return true;
 }
 
 function computeRetryAfterSeconds(until?: string): number | undefined {
