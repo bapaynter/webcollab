@@ -86,6 +86,25 @@ export function buildServer(options: ServerOptions): ServerHandle {
     };
   });
 
+  fastify.get("/api/page", async (request, reply) => {
+    const query = request.query as { path?: string };
+    if (typeof query.path !== "string" || query.path === "") {
+      reply.code(400);
+      return { error: "path required" };
+    }
+    const page = getPageByPath(db, query.path);
+    if (page === null) {
+      reply.code(404);
+      return { error: "not found" };
+    }
+    return {
+      path: page.path,
+      version: page.version,
+      updated_at: page.updated_at,
+      html: page.current_html,
+    };
+  });
+
   return {
     fastify,
     db,

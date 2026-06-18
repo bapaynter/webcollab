@@ -113,4 +113,31 @@ describe("server", () => {
       assert.equal(body.version, 0);
     });
   });
+
+  describe("GET /api/page", () => {
+    it("returns 200 with full HTML for known page", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<main>hi</main>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/api/page?path=/foo" });
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body) as { path: string; html: string };
+      assert.equal(body.path, "/foo");
+      assert.equal(body.html, "<main>hi</main>");
+    });
+
+    it("returns 404 for unknown path", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/api/page?path=/nope" });
+      assert.equal(response.statusCode, 404);
+    });
+
+    it("returns 400 when path is missing", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/api/page" });
+      assert.equal(response.statusCode, 400);
+    });
+  });
 });
