@@ -140,4 +140,56 @@ describe("server", () => {
       assert.equal(response.statusCode, 400);
     });
   });
+
+  describe("POST /api/suggest (edits)", () => {
+    it("returns 400 on empty message", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "" },
+      });
+      assert.equal(response.statusCode, 400);
+    });
+
+    it("returns 422 on pre-LLM blocklist hit", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a <script> tag" },
+      });
+      assert.equal(response.statusCode, 422);
+    });
+
+    it("returns 200 on accepted edit, bumps page version, writes edit log", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "added heading",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () => "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
+      });
+      handles.push(handle);
+      createPage(handle.db, "/", "<!DOCTYPE html><html><body></body></html>");
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a heading", path: "/" },
+      });
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body) as { status: string; version: number; path: string };
+      assert.equal(body.status, "accepted");
+      assert.equal(body.path, "/");
+      assert.equal(body.version, 1);
+    });
+  });
 });

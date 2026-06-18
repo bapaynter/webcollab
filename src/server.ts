@@ -7,18 +7,30 @@ import { injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { callChat, type CallOptions } from "./llm.js";
+import { runSuggest, type SuggestDeps } from "./suggest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 
 export interface ServerOptions {
   readonly dbPath: string;
+  readonly apiKey?: string;
+  readonly validatorModel?: string;
+  readonly executorModel?: string;
+  readonly maxEditDelta?: number;
+  readonly cooldownMinutes?: number;
+  readonly ipHashSalt?: string;
+  readonly maxPageDepth?: number;
+  readonly callLLM?: (options: CallOptions) => Promise<string>;
+  readonly callExecutor?: (options: CallOptions) => Promise<string>;
 }
 
 export interface ServerHandle {
   readonly fastify: FastifyInstance;
   readonly db: Database;
   readonly close: () => Promise<void>;
+  readonly broadcast: (event: { type: "edit"; path: string; version: number; summary: string }) => void;
 }
 
 export interface BroadcastEvent {
@@ -32,6 +44,36 @@ export function buildServer(options: ServerOptions): ServerHandle {
   const db = initDb(options.dbPath);
   const fastify = Fastify({ logger: false });
   void fastify.register(websocket);
+
+  const wsClients = new Set<unknown>();
+  const broadcast: ServerHandle["broadcast"] = (event) => {
+    const json = JSON.stringify(event);
+    for (const client of wsClients) {
+      const c = client as { send?: (data: string) => void; readyState?: number };
+      if (typeof c.send === "function" && c.readyState === 1) {
+        c.send(json);
+      }
+    }
+  };
+
+  const defaultCallLLM = (opts: CallOptions) =>
+    callChat({ ...opts, model: opts.model === "test-model" ? opts.model : (options.validatorModel ?? opts.model) });
+  const callLLM = options.callLLM ?? defaultCallLLM;
+  const callExecutor = options.callExecutor ?? ((opts) => callChat(opts));
+
+  const suggestDeps: SuggestDeps = {
+    db,
+    apiKey: options.apiKey ?? "test-key",
+    validatorModel: options.validatorModel ?? "test-model",
+    executorModel: options.executorModel ?? "test-model",
+    maxEditDelta: options.maxEditDelta ?? 20,
+    cooldownMinutes: options.cooldownMinutes ?? 60,
+    ipHashSalt: options.ipHashSalt ?? "a".repeat(64),
+    maxPageDepth: options.maxPageDepth ?? 4,
+    callLLM,
+    callExecutor,
+    broadcast,
+  };
 
   fastify.get("/healthz", async () => ({ status: "ok" }));
 
@@ -105,9 +147,40 @@ export function buildServer(options: ServerOptions): ServerHandle {
     };
   });
 
+  fastify.post<{ Body: { message?: string; path?: string } }>("/api/suggest", async (request, reply) => {
+    const body = request.body ?? {};
+    const ip = request.ip;
+    const result = await runSuggest(suggestDeps, {
+      message: body.message ?? "",
+      path: body.path,
+      ip,
+    });
+    if (result.status === "accepted") {
+      return result;
+    }
+    if (result.reason === "empty message" || result.reason === "message too long (>500 chars)" || result.reason.startsWith("invalid path")) {
+      reply.code(400);
+      return result;
+    }
+    if (result.reason === "cooldown active") {
+      reply.code(429);
+      return result;
+    }
+    reply.code(422);
+    return result;
+  });
+
+  fastify.get("/ws", { websocket: true }, (socket) => {
+    wsClients.add(socket);
+    socket.on("close", () => {
+      wsClients.delete(socket);
+    });
+  });
+
   return {
     fastify,
     db,
+    broadcast,
     async close() {
       await fastify.close();
       db.close();
