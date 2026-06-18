@@ -34,6 +34,20 @@ export function buildServer(options: ServerOptions): ServerHandle {
 
   fastify.get("/healthz", async () => ({ status: "ok" }));
 
+  fastify.get("/paper.min.css", async (_request, reply) => {
+    const css = await readPublicFile("paper.min.css");
+    reply.type("text/css; charset=utf-8");
+    reply.header("Cache-Control", "public, max-age=3600");
+    return css;
+  });
+
+  fastify.get("/widget.js", async (_request, reply) => {
+    const js = await readPublicFile("widget.js");
+    reply.type("application/javascript; charset=utf-8");
+    reply.header("Cache-Control", "no-cache");
+    return js;
+  });
+
   fastify.get<{ Params: { path: string } }>("/:path", async (request, reply) => {
     const requested = request.params.path;
     const pagePath = requested === "" ? "/" : `/${requested}`;

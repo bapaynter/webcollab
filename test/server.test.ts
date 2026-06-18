@@ -67,4 +67,23 @@ describe("server", () => {
       assert.equal(response.headers["x-frame-options"], "DENY");
     });
   });
+
+  describe("static files", () => {
+    it("serves /paper.min.css with text/css content-type", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/paper.min.css" });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.headers["content-type"] ?? "", /text\/css/);
+      assert.ok(response.body.length > 100);
+    });
+
+    it("serves /widget.js with application/javascript content-type", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/widget.js" });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.headers["content-type"] ?? "", /javascript/);
+    });
+  });
 });
