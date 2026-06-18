@@ -183,6 +183,68 @@ describe("server", () => {
     });
   });
 
+  describe("GET /log (static read-only history)", () => {
+    it("returns 200 and html for the log page", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/log" });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.headers["content-type"] ?? "", /text\/html/);
+    });
+
+    it("includes known page paths and edit rows", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<p>v0</p>");
+      const fooPage = handle.db.prepare("SELECT id FROM pages WHERE path = '/foo'").get() as { id: number };
+      recordEdit(handle.db, {
+        page_id: fooPage.id,
+        version: 1,
+        user_suggestion: "add a heading",
+        validator_reasoning: null,
+        validator_change_summary: "added h1",
+        previous_html: "<p>v0</p>",
+        new_html: "<h1>hi</h1><p>v0</p>",
+        ip_hash: "h",
+      });
+      const response = await handle.fastify.inject({ method: "GET", url: "/log" });
+      assert.equal(response.statusCode, 200);
+      assert.ok(response.body.includes("/foo"), "should list /foo page");
+      assert.ok(response.body.includes("added h1"), "should list edit summary");
+      assert.ok(response.body.includes("add a heading"), "should list user suggestion");
+    });
+
+    it("does not include the widget script tag", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/log" });
+      assert.equal(response.statusCode, 200);
+      assert.ok(!/widget\.js/.test(response.body), "log page must not load widget.js");
+      assert.ok(!/canvas-fab/.test(response.body), "log page must not have fab button");
+    });
+
+    it("escapes user suggestion text containing script tags", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<p>v0</p>");
+      const fooPage = handle.db.prepare("SELECT id FROM pages WHERE path = '/foo'").get() as { id: number };
+      recordEdit(handle.db, {
+        page_id: fooPage.id,
+        version: 1,
+        user_suggestion: "<script>alert(1)</script>",
+        validator_reasoning: null,
+        validator_change_summary: "evil",
+        previous_html: "<p>v0</p>",
+        new_html: "<p>v1</p>",
+        ip_hash: "h",
+      });
+      const response = await handle.fastify.inject({ method: "GET", url: "/log" });
+      assert.equal(response.statusCode, 200);
+      assert.ok(!/<script>alert\(1\)<\/script>/.test(response.body), "raw script must not appear in log");
+      assert.ok(response.body.includes("&lt;script&gt;"), "script must be escaped");
+    });
+  });
+
   describe("POST /api/suggest (edits)", () => {
     it("returns 400 on empty message", async () => {
       const handle = buildServer({ dbPath: ":memory:" });
@@ -323,6 +385,31 @@ describe("server", () => {
       const pageBody = JSON.parse(pageRes.body) as { html: string };
       assert.ok(!/"parent_html"/.test(pageBody.html), "stored html must not contain create-payload JSON");
       assert.ok(!/\\&quot;/.test(pageBody.html), "stored html must not contain escaped quote corruption");
+    });
+
+    it("rejects EDIT suggest to /log (reserved read-only path)", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "x",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () => "<!DOCTYPE html><html><body><p>x</p></body></html>",
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "change something", path: "/log" },
+      });
+      assert.equal(response.statusCode, 400, `body: ${response.body}`);
+      const body = JSON.parse(response.body) as { reason: string };
+      assert.match(body.reason, /reserved|read-only|\/log/);
     });
   });
 

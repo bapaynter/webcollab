@@ -2,7 +2,7 @@ import { describe, it, beforeEach } from "node:test";
 import { strict as assert } from "node:assert";
 import { initDb } from "../src/db.js";
 import { createPage, getPageByPath } from "../src/pages.js";
-import { recordEdit, listEdits, getEditAtVersion, listRecentEdits } from "../src/edits.js";
+import { recordEdit, listEdits, getEditAtVersion, listRecentEdits, listAllEdits } from "../src/edits.js";
 
 describe("edits", () => {
   let db: ReturnType<typeof initDb>;
@@ -172,6 +172,48 @@ describe("edits", () => {
       assert.equal(recent.length, 2);
       assert.equal(recent[0]?.version, 5);
       assert.equal(recent[1]?.version, 4);
+    });
+  });
+
+  describe("listAllEdits", () => {
+    it("returns full history across pages, newest first", () => {
+      createPage(db, "/a", "<p>a0</p>");
+      createPage(db, "/b", "<p>b0</p>");
+      const pageA = getPageByPath(db, "/a");
+      const pageB = getPageByPath(db, "/b");
+      assert.ok(pageA);
+      assert.ok(pageB);
+      recordEdit(db, {
+        page_id: pageA.id,
+        version: 1,
+        user_suggestion: "a1",
+        validator_reasoning: null,
+        validator_change_summary: "a1sum",
+        previous_html: "<p>a0</p>",
+        new_html: "<p>a1</p>",
+        ip_hash: "h",
+      });
+      recordEdit(db, {
+        page_id: pageB.id,
+        version: 1,
+        user_suggestion: "b1",
+        validator_reasoning: null,
+        validator_change_summary: "b1sum",
+        previous_html: "<p>b0</p>",
+        new_html: "<p>b1</p>",
+        ip_hash: "h",
+      });
+      const all = listAllEdits(db);
+      assert.equal(all.length, 2);
+      assert.equal(all[0]?.path, "/b");
+      assert.equal(all[1]?.path, "/a");
+      assert.equal(all[0]?.summary, "b1sum");
+      assert.equal(all[0]?.user_suggestion, "b1");
+    });
+
+    it("returns empty array when no edits exist", () => {
+      createPage(db, "/a", "<p>a0</p>");
+      assert.deepEqual(listAllEdits(db), []);
     });
   });
 });

@@ -6,6 +6,7 @@ import { listRecentEdits, listRecentEditsForPage } from "./edits.js";
 import { rollbackPage, rollbackToSeed } from "./rollback.js";
 import { injectBodyMargin, injectPaperCss, injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
 import { ensureSeed } from "./seedInit.js";
+import { renderLogPage } from "./logPage.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -215,6 +216,14 @@ export function buildServer(options: ServerOptions): ServerHandle {
 
   fastify.get("/", async (_request, reply) => {
     return await servePage(db, "/", reply);
+  });
+
+  fastify.get("/log", async (_request, reply) => {
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
+      reply.header(header, value);
+    }
+    reply.type("text/html; charset=utf-8");
+    return renderLogPage(db);
   });
 
   fastify.get<{ Params: { "*": string } }>("/*", async (request, reply) => {

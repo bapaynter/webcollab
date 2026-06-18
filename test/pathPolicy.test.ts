@@ -60,5 +60,13 @@ describe("pathPolicy", () => {
     it("rejects path with consecutive slashes", () => {
       assert.equal(validatePathFormat("/foo//bar").ok, false);
     });
+
+    it("rejects /log (reserved for static read-only page)", () => {
+      const result = validatePathFormat("/log");
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.match(result.reason, /reserved/);
+      }
+    });
   });
 });

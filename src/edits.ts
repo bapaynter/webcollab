@@ -37,6 +37,14 @@ export interface ScopedRecentEdit {
   readonly created_at: string;
 }
 
+export interface FullEdit {
+  readonly path: string;
+  readonly version: number;
+  readonly created_at: string;
+  readonly summary: string | null;
+  readonly user_suggestion: string;
+}
+
 export function recordEdit(db: Database, edit: EditInsert): number {
   const now = new Date().toISOString();
   const result = db
@@ -109,4 +117,16 @@ export function listRecentEditsForPage(
          LIMIT ?`,
     )
     .all(pageId, limit) as ScopedRecentEdit[];
+}
+
+export function listAllEdits(db: Database): ReadonlyArray<FullEdit> {
+  return db
+    .prepare(
+      `SELECT p.path AS path, e.version AS version, e.created_at AS created_at,
+              e.validator_change_summary AS summary, e.user_suggestion AS user_suggestion
+         FROM edits e
+         JOIN pages p ON p.id = e.page_id
+         ORDER BY e.created_at DESC, e.id DESC`,
+    )
+    .all() as FullEdit[];
 }
