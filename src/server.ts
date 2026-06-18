@@ -44,7 +44,7 @@ export interface BroadcastEvent {
 export function buildServer(options: ServerOptions): ServerHandle {
   const db = initDb(options.dbPath);
   ensureSeed(db, "/");
-  const fastify = Fastify({ logger: false });
+  const fastify = Fastify({ logger: true });
   void fastify.register(websocket);
 
   const wsClients = new Set<unknown>();
@@ -57,6 +57,7 @@ export function buildServer(options: ServerOptions): ServerHandle {
       }
     }
   };
+  void broadcast;
 
   const callLLM = options.callLLM ?? ((opts) => callChat(opts));
   const callExecutor = options.callExecutor ?? ((opts) => callChat(opts));
@@ -157,10 +158,13 @@ export function buildServer(options: ServerOptions): ServerHandle {
     return result;
   });
 
-  fastify.get("/ws", { websocket: true }, (socket) => {
-    wsClients.add(socket);
-    socket.on("close", () => {
-      wsClients.delete(socket);
+  fastify.register(async (scope) => {
+    scope.get("/ws", { websocket: true }, (socket, _request) => {
+      void _request;
+      wsClients.add(socket as unknown as { send: (d: string) => void; readyState?: number });
+      (socket as unknown as { on: (e: string, fn: () => void) => void }).on("close", () => {
+        wsClients.delete(socket);
+      });
     });
   });
 
