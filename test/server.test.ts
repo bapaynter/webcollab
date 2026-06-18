@@ -270,4 +270,22 @@ describe("server", () => {
       assert.match(body.reason, /exists/);
     });
   });
+
+  describe("WebSocket broadcast (server-side)", () => {
+    it("calls broadcast on accepted edit", () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      let called = false;
+      const originalBroadcast = handle.broadcast;
+      handle.broadcast = (event) => {
+        called = true;
+        assert.equal(event.type, "edit");
+        assert.equal(event.path, "/");
+        originalBroadcast(event);
+      };
+      createPage(handle.db, "/", "<!DOCTYPE html><html><body></body></html>");
+      handle.broadcast({ type: "edit", path: "/", version: 1, summary: "test" });
+      assert.equal(called, true);
+    });
+  });
 });
