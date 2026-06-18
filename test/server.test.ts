@@ -39,7 +39,7 @@ describe("server", () => {
       handles.push(handle);
       createPage(handle.db, "/foo", "<main>hi</main>");
       const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
-      assert.equal(response.statusCode, 200);
+      assert.equal(response.statusCode, 200, `body: ${response.body}`);
       assert.match(response.body, /<main>hi<\/main>/);
     });
 
@@ -183,13 +183,91 @@ describe("server", () => {
       const response = await handle.fastify.inject({
         method: "POST",
         url: "/api/suggest",
-        payload: { message: "add a heading", path: "/" },
+        payload: { message: "add a heading to say Welcome", path: "/" },
       });
       assert.equal(response.statusCode, 200);
       const body = JSON.parse(response.body) as { status: string; version: number; path: string };
       assert.equal(body.status, "accepted");
       assert.equal(body.path, "/");
       assert.equal(body.version, 1);
+    });
+  });
+
+  describe("POST /api/suggest (creates)", () => {
+    it("creates a new page and links to it from the parent", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callExecutor: async () =>
+          JSON.stringify({
+            parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          }),
+      });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<!DOCTYPE html><html><body></body></html>");
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a gallery", path: "/foo" },
+      });
+      assert.equal(response.statusCode, 200, `body: ${response.body}`);
+      const newPageResponse = await handle.fastify.inject({ method: "GET", url: "/foo/gallery" });
+      assert.equal(newPageResponse.statusCode, 200, `body: ${newPageResponse.body}`);
+    });
+
+    it("rejects when link-guard fails (no anchor in parent)", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callExecutor: async () =>
+          JSON.stringify({
+            parent_html: "<!DOCTYPE html><html><body></body></html>",
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          }),
+      });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<!DOCTYPE html><html><body></body></html>");
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a gallery", path: "/foo" },
+      });
+      assert.equal(response.statusCode, 422);
+    });
+
+    it("rejects depth cap exceeded", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/a/b/c/d", "<!DOCTYPE html><html><body></body></html>");
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a gallery", path: "/a/b/c/d" },
+      });
+      assert.equal(response.statusCode, 422);
+      const body = JSON.parse(response.body) as { reason: string };
+      assert.match(body.reason, /depth/);
+    });
+
+    it("rejects path already exists", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callExecutor: async () =>
+          JSON.stringify({
+            parent_html: '<!DOCTYPE html><html><body><a href="/foo">x</a></body></html>',
+            new_html: "<!DOCTYPE html><html><body></body></html>",
+          }),
+      });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<!DOCTYPE html><html><body></body></html>");
+      createPage(handle.db, "/foo/gallery", "<!DOCTYPE html><html><body></body></html>");
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add a gallery", path: "/foo" },
+      });
+      assert.equal(response.statusCode, 422);
+      const body = JSON.parse(response.body) as { reason: string };
+      assert.match(body.reason, /exists/);
     });
   });
 });

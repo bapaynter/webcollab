@@ -70,14 +70,23 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
       }
       return await runCreatePipeline(deps, message, targetPath, slugResult.value.path);
     }
+    if (slugResult.reason.includes("depth")) {
+      return { status: "rejected", reason: slugResult.reason };
+    }
   }
 
   return await runEditPipeline(deps, message, targetPath, ipHash);
 }
 
-const NEW_PAGE_CUE_PATTERN = /\b(?:create|make\s+a\s+(?:new\s+)?page|add\s+a\s+(?:new\s+)?page|new\s+page)\b|\bcalled\s+\/|(?:\s|^)\/[a-z0-9-]+\b/i;
+const NEW_PAGE_CUE_PATTERN =
+  /\b(?:create|make(?:\s+a)?|new\s+page|add\s+a)\b|\bcalled\s+|\/(?:[a-z0-9-]+)\b/i;
+
+const EDIT_CUE_PATTERN = /\b(?:change|update|modify|set|replace|edit|remove|delete)\b|\bto\s+(?:say|be|read)\b/i;
 
 function impliesNewPage(message: string): boolean {
+  if (EDIT_CUE_PATTERN.test(message)) {
+    return false;
+  }
   return NEW_PAGE_CUE_PATTERN.test(message);
 }
 
@@ -165,6 +174,7 @@ async function runCreatePipeline(
   const sanitizedNew = sanitizeHTML(createResult.new_html);
   const linkCheck = verifyLink(sanitizedParent, parentPath, newPath);
   if (!linkCheck.ok) {
+    console.error("runCreatePipeline: link-guard failed", { parentPath, newPath, sanitizedParent, reason: linkCheck.reason });
     return { status: "rejected", reason: linkCheck.reason };
   }
   return await commitCreate(
@@ -222,8 +232,13 @@ async function commitCreate(
   summary: string,
   ipHash: string,
 ): Promise<SuggestResponse> {
-  updatePageHtml(deps.db, parentId, newParentHtml);
-  createPage(deps.db, newPath, newPageHtml);
+  try {
+    updatePageHtml(deps.db, parentId, newParentHtml);
+    createPage(deps.db, newPath, newPageHtml);
+  } catch (err) {
+    console.error("commitCreate: write failed", { parentPath, newPath, err });
+    return { status: "rejected", reason: `commit failed: ${(err as Error).message}` };
+  }
   const updatedParent = getPageByPath(deps.db, parentPath);
   const newPage = getPageByPath(deps.db, newPath);
   if (updatedParent === null || newPage === null) {

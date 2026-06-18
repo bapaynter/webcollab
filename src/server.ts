@@ -56,9 +56,7 @@ export function buildServer(options: ServerOptions): ServerHandle {
     }
   };
 
-  const defaultCallLLM = (opts: CallOptions) =>
-    callChat({ ...opts, model: opts.model === "test-model" ? opts.model : (options.validatorModel ?? opts.model) });
-  const callLLM = options.callLLM ?? defaultCallLLM;
+  const callLLM = options.callLLM ?? ((opts) => callChat(opts));
   const callExecutor = options.callExecutor ?? ((opts) => callChat(opts));
 
   const suggestDeps: SuggestDeps = {
@@ -89,23 +87,6 @@ export function buildServer(options: ServerOptions): ServerHandle {
     reply.type("application/javascript; charset=utf-8");
     reply.header("Cache-Control", "no-cache");
     return js;
-  });
-
-  fastify.get<{ Params: { path: string } }>("/:path", async (request, reply) => {
-    const requested = request.params.path;
-    const pagePath = requested === "" ? "/" : `/${requested}`;
-    const page = getPageByPath(db, pagePath);
-    if (page === null) {
-      reply.code(404);
-      reply.type("text/plain");
-      return "Not Found";
-    }
-    const html = injectWidgetScript(page.current_html);
-    for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
-      reply.header(header, value);
-    }
-    reply.type("text/html; charset=utf-8");
-    return html;
   });
 
   fastify.get("/api/state", async (request) => {
@@ -158,7 +139,11 @@ export function buildServer(options: ServerOptions): ServerHandle {
     if (result.status === "accepted") {
       return result;
     }
-    if (result.reason === "empty message" || result.reason === "message too long (>500 chars)" || result.reason.startsWith("invalid path")) {
+    if (
+      result.reason === "empty message" ||
+      result.reason === "message too long (>500 chars)" ||
+      result.reason.startsWith("invalid path")
+    ) {
       reply.code(400);
       return result;
     }
@@ -177,6 +162,16 @@ export function buildServer(options: ServerOptions): ServerHandle {
     });
   });
 
+  fastify.get("/", async (_request, reply) => {
+    return await servePage(db, "/", reply);
+  });
+
+  fastify.get<{ Params: { "*": string } }>("/*", async (request, reply) => {
+    const requested = request.params["*"];
+    const pagePath = requested === undefined || requested === "" ? "/" : `/${requested}`;
+    return await servePage(db, pagePath, reply);
+  });
+
   return {
     fastify,
     db,
@@ -190,4 +185,23 @@ export function buildServer(options: ServerOptions): ServerHandle {
 
 export async function readPublicFile(name: string): Promise<string> {
   return readFile(join(PUBLIC_DIR, name), "utf-8");
+}
+
+async function servePage(
+  db: Database,
+  pagePath: string,
+  reply: import("fastify").FastifyReply,
+): Promise<string> {
+  const page = getPageByPath(db, pagePath);
+  if (page === null) {
+    reply.code(404);
+    reply.type("text/plain");
+    return "Not Found";
+  }
+  const html = injectWidgetScript(page.current_html);
+  for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
+    reply.header(header, value);
+  }
+  reply.type("text/html; charset=utf-8");
+  return html;
 }
