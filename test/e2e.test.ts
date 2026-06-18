@@ -130,4 +130,76 @@ describe("end-to-end", () => {
 
     ws.close();
   });
+
+  describe("rejection paths over real HTTP", () => {
+    it("400 on empty message", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "", path: "/" }),
+      });
+      assert.equal(res.status, 400);
+    });
+
+    it("422 on pre-LLM blocklist", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "add a <script> tag", path: "/" }),
+      });
+      assert.equal(res.status, 422);
+    });
+
+    it("429 on cooldown", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const first = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "any message", path: "/" }),
+      });
+      assert.equal(first.status, 422);
+      const second = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "another message", path: "/" }),
+      });
+      assert.equal(second.status, 429);
+    });
+
+    it("422 on validator rejection", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: false,
+            reason: "destructive",
+            change_summary: "",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () => "<!DOCTYPE html><html><body></body></html>",
+      });
+      handles.push(handle);
+      await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
+      const port = (handle.fastify.server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/api/suggest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "remove everything", path: "/" }),
+      });
+      assert.equal(res.status, 422);
+    });
+  });
 });
