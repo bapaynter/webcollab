@@ -357,6 +357,48 @@ describe("server", () => {
       assert.equal(body.version, 1);
     });
 
+    it("returns 422 patch conflict when executor patch does not fit latest page html", async () => {
+      let handle: ServerHandle;
+      handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "edit heading",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () => {
+          const root = handle.db.prepare("SELECT id FROM pages WHERE path = '/'").get() as { id: number };
+          updatePageHtml(
+            handle.db,
+            root.id,
+            "<!DOCTYPE html><html><body><main><h1>Latest</h1><p>Changed concurrently</p></main></body></html>",
+          );
+          return JSON.stringify({
+            operations: [
+              {
+                op: "replace",
+                target: "<p>Suggest a change in the chat.</p>",
+                content: "<p>Patched</p>",
+              },
+            ],
+          });
+        },
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "update intro text", path: "/" },
+      });
+      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      const body = JSON.parse(response.body) as { reason: string };
+      assert.match(body.reason, /patch conflict/i);
+    });
+
     it("rejects 422 when executor returns HTML-wrapped CREATE payload (page stays clean)", async () => {
       const handle = buildServer({
         dbPath: ":memory:",

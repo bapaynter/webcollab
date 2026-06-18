@@ -16,6 +16,85 @@ function makeDeps(overrides: Partial<ExecutorDeps> = {}): ExecutorDeps {
 
 describe("executor", () => {
   describe("applyEdit", () => {
+    it("applies JSON patch operations", async () => {
+      const deps = makeDeps({
+        callLLM: async () =>
+          JSON.stringify({
+            operations: [
+              {
+                op: "replace",
+                target: "<h1>Old</h1>",
+                content: "<h1>New</h1>",
+              },
+            ],
+          }),
+      });
+      const result = await applyEdit(
+        deps,
+        "change heading",
+        "<!DOCTYPE html><html><body><main><h1>Old</h1></main></body></html>",
+        "/foo",
+      );
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.match(result.html, /<h1>New<\/h1>/);
+        assert.match(result.previousHtml, /<h1>Old<\/h1>/);
+      }
+    });
+
+    it("loads latest HTML before applying patch when callback provided", async () => {
+      const deps = makeDeps({
+        callLLM: async () =>
+          JSON.stringify({
+            operations: [
+              {
+                op: "replace",
+                target: "<h1>Latest</h1>",
+                content: "<h1>Patched</h1>",
+              },
+            ],
+          }),
+      });
+      const result = await applyEdit(
+        deps,
+        "change heading",
+        "<!DOCTYPE html><html><body><main><h1>Old</h1></main></body></html>",
+        "/foo",
+        async () => "<!DOCTYPE html><html><body><main><h1>Latest</h1></main></body></html>",
+      );
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.match(result.html, /<h1>Patched<\/h1>/);
+        assert.match(result.previousHtml, /<h1>Latest<\/h1>/);
+      }
+    });
+
+    it("returns patch conflict when patch does not fit latest HTML", async () => {
+      const deps = makeDeps({
+        callLLM: async () =>
+          JSON.stringify({
+            operations: [
+              {
+                op: "replace",
+                target: "<h1>Old</h1>",
+                content: "<h1>Patched</h1>",
+              },
+            ],
+          }),
+      });
+      const result = await applyEdit(
+        deps,
+        "change heading",
+        "<!DOCTYPE html><html><body><main><h1>Old</h1></main></body></html>",
+        "/foo",
+        async () => "<!DOCTYPE html><html><body><main><h1>Latest</h1></main></body></html>",
+      );
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.match(result.reason, /patch conflict/i);
+      }
+    });
+
     it("returns full updated HTML", async () => {
       const deps = makeDeps({
         callLLM: async () => "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
@@ -24,6 +103,7 @@ describe("executor", () => {
       assert.equal(result.ok, true);
       if (result.ok) {
         assert.match(result.html, /<h1>Hi<\/h1>/);
+        assert.match(result.previousHtml, /<body><\/body>/);
       }
     });
 
@@ -47,6 +127,17 @@ describe("executor", () => {
       });
       const result = await applyEdit(deps, "x", "<html></html>", "/foo");
       assert.equal(result.ok, false);
+    });
+
+    it("returns ok=false on malformed non-HTML response", async () => {
+      const deps = makeDeps({
+        callLLM: async () => "not-json-not-html",
+      });
+      const result = await applyEdit(deps, "x", "<html><body></body></html>", "/foo");
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.match(result.reason, /malformed/i);
+      }
     });
 
     it("rejects raw CREATE JSON returned for an EDIT request", async () => {

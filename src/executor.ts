@@ -18,9 +18,22 @@ Styling:
 - If the user asks for a color, layout, font size, or other visual change, set the corresponding style="..." attribute on the relevant element.
 
 Output format (EDIT):
-- Return ONLY the full updated HTML document, no prose, no code fences, no explanation.
-- Do NOT return JSON. Do NOT return an object with "parent_html" or "new_html" fields. Those keys are for the CREATE task and must never appear in your response.
-- Do NOT wrap the response in any container that hides a JSON object. The response must be a valid HTML document that can be served directly.`;
+- Return JSON only, no prose, no code fences, with this exact shape:
+{
+  "operations": [
+    {
+      "op": "replace" | "replaceAll" | "insertBefore" | "insertAfter" | "remove",
+      "target": string,
+      "content": string,      // required for replace/replaceAll/insertBefore/insertAfter
+      "occurrence": number    // optional, 1-based occurrence (default 1)
+    }
+  ]
+}
+- operations must be minimal and specific to changed chunk(s), not full-document rewrites.
+- target MUST be an exact substring from Current HTML.
+- For op=remove, do not include content.
+- If no change needed, return {"operations":[]}
+- NEVER return keys "parent_html" or "new_html" in EDIT mode.`;
 
 const CREATE_SYSTEM_PROMPT = `You are an HTML editor for a collaborative website. The user wants to CREATE a new page on the site.
 
@@ -47,16 +60,19 @@ export interface ExecutorDeps {
   readonly callLLM: (options: CallOptions) => Promise<string>;
 }
 
-export type EditResult = { ok: true; html: string } | { ok: false; reason: string };
+export type EditResult = { ok: true; html: string; previousHtml: string } | { ok: false; reason: string };
 export type CreateResult =
   | { ok: true; parent_html: string; new_html: string }
   | { ok: false; reason: string };
+
+type LoadLatestHtml = () => Promise<string | null>;
 
 export async function applyEdit(
   deps: ExecutorDeps,
   message: string,
   currentHtml: string,
   currentPath: string,
+  loadLatestHtml?: LoadLatestHtml,
 ): Promise<EditResult> {
   let raw: string;
   try {
@@ -79,7 +95,24 @@ export async function applyEdit(
     console.error("executor.applyEdit: LLM returned CREATE payload for EDIT request", { currentPath });
     return { ok: false, reason: "executor returned CREATE payload for EDIT request" };
   }
-  return { ok: true, html };
+  const patch = parseEditPatch(html);
+  if (patch !== null) {
+    const latestHtml = await resolveLatestHtml(currentHtml, loadLatestHtml);
+    if (latestHtml === null) {
+      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    }
+    const patched = applyEditPatch(latestHtml, patch);
+    if (!patched.ok) {
+      console.error("executor.applyEdit: failed to apply edit patch", { currentPath, reason: patched.reason });
+      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    }
+    return { ok: true, html: patched.html, previousHtml: latestHtml };
+  }
+  if (looksLikeHtmlDocument(html)) {
+    const latestHtml = await resolveLatestHtml(currentHtml, loadLatestHtml);
+    return { ok: true, html, previousHtml: latestHtml ?? currentHtml };
+  }
+  return { ok: false, reason: "executor returned malformed response" };
 }
 
 export async function applyCreate(
@@ -243,7 +276,7 @@ ${currentHtml}
 
 User's requested change: ${message}
 
-Return the full updated HTML document only. No prose, no code fences.`;
+Return JSON patch operations only. No prose, no code fences.`;
 }
 
 function buildCreatePrompt(
@@ -283,4 +316,168 @@ function isCreateResponse(value: unknown): value is { parent_html: string; new_h
   }
   const v = value as Record<string, unknown>;
   return typeof v["parent_html"] === "string" && typeof v["new_html"] === "string";
+}
+
+interface EditPatchOperation {
+  readonly op: "replace" | "replaceAll" | "insertBefore" | "insertAfter" | "remove";
+  readonly target: string;
+  readonly content?: string;
+  readonly occurrence?: number;
+}
+
+interface EditPatchPayload {
+  readonly operations: ReadonlyArray<EditPatchOperation>;
+}
+
+function parseEditPatch(content: string): EditPatchPayload | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!isEditPatchPayload(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+function isEditPatchPayload(value: unknown): value is EditPatchPayload {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v["operations"])) {
+    return false;
+  }
+  return v["operations"].every((item: unknown) => isEditPatchOperation(item));
+}
+
+function isEditPatchOperation(value: unknown): value is EditPatchOperation {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const v = value as Record<string, unknown>;
+  const op = v["op"];
+  const target = v["target"];
+  const content = v["content"];
+  const occurrence = v["occurrence"];
+  if (
+    op !== "replace" &&
+    op !== "replaceAll" &&
+    op !== "insertBefore" &&
+    op !== "insertAfter" &&
+    op !== "remove"
+  ) {
+    return false;
+  }
+  if (typeof target !== "string" || target.length === 0) {
+    return false;
+  }
+  if (
+    occurrence !== undefined &&
+    (typeof occurrence !== "number" || !Number.isInteger(occurrence) || occurrence < 1)
+  ) {
+    return false;
+  }
+  if (op === "remove") {
+    return content === undefined;
+  }
+  return typeof content === "string";
+}
+
+function applyEditPatch(currentHtml: string, patch: EditPatchPayload): { ok: true; html: string } | { ok: false; reason: string } {
+  let html = currentHtml;
+  for (let index = 0; index < patch.operations.length; index += 1) {
+    const operation = patch.operations[index];
+    const result = applyOperation(html, operation);
+    if (!result.ok) {
+      return { ok: false, reason: `patch op ${index + 1} failed: ${result.reason}` };
+    }
+    html = result.html;
+  }
+  return { ok: true, html };
+}
+
+function applyOperation(currentHtml: string, operation: EditPatchOperation): { ok: true; html: string } | { ok: false; reason: string } {
+  if (operation.op === "replaceAll") {
+    if (!currentHtml.includes(operation.target)) {
+      return { ok: false, reason: "target not found" };
+    }
+    const replacement = operation.content ?? "";
+    return { ok: true, html: currentHtml.split(operation.target).join(replacement) };
+  }
+
+  const occurrence = operation.occurrence ?? 1;
+  const at = findOccurrenceIndex(currentHtml, operation.target, occurrence);
+  if (at === -1) {
+    return { ok: false, reason: "target occurrence not found" };
+  }
+
+  if (operation.op === "replace") {
+    const replacement = operation.content ?? "";
+    return {
+      ok: true,
+      html: currentHtml.slice(0, at) + replacement + currentHtml.slice(at + operation.target.length),
+    };
+  }
+  if (operation.op === "insertBefore") {
+    const inserted = operation.content ?? "";
+    return {
+      ok: true,
+      html: currentHtml.slice(0, at) + inserted + currentHtml.slice(at),
+    };
+  }
+  if (operation.op === "insertAfter") {
+    const inserted = operation.content ?? "";
+    return {
+      ok: true,
+      html: currentHtml.slice(0, at + operation.target.length) + inserted + currentHtml.slice(at + operation.target.length),
+    };
+  }
+
+  return {
+    ok: true,
+    html: currentHtml.slice(0, at) + currentHtml.slice(at + operation.target.length),
+  };
+}
+
+function findOccurrenceIndex(content: string, target: string, occurrence: number): number {
+  let fromIndex = 0;
+  let seen = 0;
+  while (fromIndex <= content.length) {
+    const at = content.indexOf(target, fromIndex);
+    if (at === -1) {
+      return -1;
+    }
+    seen += 1;
+    if (seen === occurrence) {
+      return at;
+    }
+    fromIndex = at + target.length;
+  }
+  return -1;
+}
+
+function looksLikeHtmlDocument(content: string): boolean {
+  const lower = content.toLowerCase();
+  return lower.includes("<html") && lower.includes("<body");
+}
+
+const PATCH_CONFLICT_REASON = "patch conflict: page changed; refresh and retry";
+
+async function resolveLatestHtml(currentHtml: string, loadLatestHtml?: LoadLatestHtml): Promise<string | null> {
+  if (loadLatestHtml === undefined) {
+    return currentHtml;
+  }
+  try {
+    const latestHtml = await loadLatestHtml();
+    if (typeof latestHtml !== "string") {
+      return null;
+    }
+    return latestHtml;
+  } catch (err) {
+    console.error("executor.applyEdit: failed to load latest html", err);
+    return null;
+  }
 }

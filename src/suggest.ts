@@ -142,6 +142,13 @@ async function runEditPipeline(
     message,
     page.current_html,
     targetPath,
+    async () => {
+      const latestPage = getPageByPath(deps.db, targetPath);
+      if (latestPage === null) {
+        return null;
+      }
+      return latestPage.current_html;
+    },
   );
   if (!executorResult.ok) {
     return { status: "rejected", reason: executorResult.reason };
@@ -159,7 +166,7 @@ async function runEditPipeline(
     console.error("runEditPipeline: sanitized output is not an HTML document", { targetPath, sanitized });
     return { status: "rejected", reason: "executor returned non-HTML content" };
   }
-  const sanitizedPrior = sanitizeHTML(page.current_html);
+  const sanitizedPrior = sanitizeHTML(executorResult.previousHtml);
   const structuralCheck = checkStructuralDelta(
     countBodyChildren(sanitizedPrior),
     countBodyChildren(sanitized),
@@ -167,7 +174,20 @@ async function runEditPipeline(
   if (!structuralCheck.ok) {
     return { status: "rejected", reason: structuralCheck.reason };
   }
-  return await commitEdit(deps, targetPath, page.id, page.current_html, sanitized, message, changeSummary, ipHash);
+  const latestPage = getPageByPath(deps.db, targetPath);
+  if (latestPage === null) {
+    return { status: "rejected", reason: "internal: page vanished before commit" };
+  }
+  return await commitEdit(
+    deps,
+    targetPath,
+    latestPage.id,
+    executorResult.previousHtml,
+    sanitized,
+    message,
+    changeSummary,
+    ipHash,
+  );
 }
 
 async function runCreatePipeline(
