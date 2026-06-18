@@ -1,4 +1,4 @@
-import { callChat, type CallOptions } from "./llm.js";
+import { type CallOptions } from "./llm.js";
 
 const EXECUTOR_SYSTEM_PROMPT = `You are an HTML editor for a collaborative website. You will receive the current HTML of a page and a user's requested change.
 
@@ -148,5 +148,3 @@ function isCreateResponse(value: unknown): value is { parent_html: string; new_h
   const v = value as Record<string, unknown>;
   return typeof v["parent_html"] === "string" && typeof v["new_html"] === "string";
 }
-
-void callChat;

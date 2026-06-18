@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { sanitizeHTML, MAX_ELEMENTS_ADDED } from "../src/sanitize.js";
+import { SEED_ROOT_HTML } from "../src/seed.js";
 
 describe("sanitize", () => {
   describe("strips dangerous content", () => {
@@ -65,6 +66,44 @@ describe("sanitize", () => {
   describe("structural guards", () => {
     it("MAX_ELEMENTS_ADDED is exposed", () => {
       assert.ok(MAX_ELEMENTS_ADDED > 0);
+    });
+  });
+
+  describe("full document preservation", () => {
+    it("preserves DOCTYPE, html, head, body structure", () => {
+      const out = sanitizeHTML(SEED_ROOT_HTML);
+      assert.match(out, /<!doctype html>/i);
+      assert.match(out, /<html/);
+      assert.match(out, /<head>/);
+      assert.match(out, /<body>/);
+    });
+
+    it("preserves meta charset and viewport", () => {
+      const out = sanitizeHTML(SEED_ROOT_HTML);
+      assert.match(out, /<meta[^>]*charset/i);
+      assert.match(out, /<meta[^>]*viewport/i);
+    });
+
+    it("preserves link stylesheet", () => {
+      const out = sanitizeHTML(SEED_ROOT_HTML);
+      assert.match(out, /<link[^>]*stylesheet/i);
+    });
+
+    it("preserves title element", () => {
+      const out = sanitizeHTML(SEED_ROOT_HTML);
+      assert.match(out, /<title>Canvas<\/title>/);
+    });
+
+    it("preserves body content (h1, p)", () => {
+      const out = sanitizeHTML(SEED_ROOT_HTML);
+      assert.match(out, /<h1>Canvas<\/h1>/);
+      assert.match(out, /Suggest a change in the chat\./);
+    });
+
+    it("strips meta http-equiv even when meta tags are allowed", () => {
+      const evil = '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=evil"></head><body></body></html>';
+      const out = sanitizeHTML(evil);
+      assert.ok(!/http-equiv/i.test(out), "http-equiv must be stripped");
     });
   });
 });

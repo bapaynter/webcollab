@@ -18,6 +18,7 @@ export interface SuggestDeps {
   readonly cooldownMinutes: number;
   readonly ipHashSalt: string;
   readonly maxPageDepth: number;
+  readonly rateLimitEnabled: boolean;
   readonly callLLM: (options: import("./llm.js").CallOptions) => Promise<string>;
   readonly callExecutor: (options: import("./llm.js").CallOptions) => Promise<string>;
   readonly broadcast?: (event: { type: "edit"; path: string; version: number; summary: string }) => void;
@@ -49,17 +50,22 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
     return { status: "rejected", reason: `invalid path: ${format.reason}` };
   }
 
+  const ipHash = hashIp(deps.ipHashSalt, input.ip);
+
   if (isBlocked(message)) {
-    recordAttempt(deps.db, hashIp(deps.ipHashSalt, input.ip), deps.cooldownMinutes);
+    if (deps.rateLimitEnabled) {
+      recordAttempt(deps.db, ipHash, deps.cooldownMinutes);
+    }
     return { status: "rejected", reason: "blocked by content policy" };
   }
 
-  const ipHash = hashIp(deps.ipHashSalt, input.ip);
-  const cooldown = checkCooldown(deps.db, ipHash);
-  if (!cooldown.ok) {
-    return { status: "rejected", reason: "cooldown active", until: cooldown.until };
+  if (deps.rateLimitEnabled) {
+    const cooldown = checkCooldown(deps.db, ipHash);
+    if (!cooldown.ok) {
+      return { status: "rejected", reason: "cooldown active", until: cooldown.until };
+    }
+    recordAttempt(deps.db, ipHash, deps.cooldownMinutes);
   }
-  recordAttempt(deps.db, ipHash, deps.cooldownMinutes);
 
   if (impliesNewPage(message)) {
     const slugResult = extractSlug(message, targetPath);
@@ -68,7 +74,7 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
       if (!depthCheck.ok) {
         return { status: "rejected", reason: depthCheck.reason };
       }
-      return await runCreatePipeline(deps, message, targetPath, slugResult.value.path);
+      return await runCreatePipeline(deps, message, targetPath, slugResult.value.path, ipHash);
     }
     if (slugResult.reason.includes("depth")) {
       return { status: "rejected", reason: slugResult.reason };
@@ -148,6 +154,7 @@ async function runCreatePipeline(
   message: string,
   parentPath: string,
   newPath: string,
+  ipHash: string,
 ): Promise<SuggestResponse> {
   if (pageExists(deps.db, newPath)) {
     return { status: "rejected", reason: "path already exists" };
@@ -188,7 +195,7 @@ async function runCreatePipeline(
     sanitizedNew,
     message,
     "added a new page",
-    hashIp(deps.ipHashSalt, "0.0.0.0"),
+    ipHash,
   );
 }
 
@@ -233,41 +240,46 @@ async function commitCreate(
   summary: string,
   ipHash: string,
 ): Promise<SuggestResponse> {
-  try {
+  const writeAll = deps.db.transaction(() => {
     updatePageHtml(deps.db, parentId, newParentHtml);
     createPage(deps.db, newPath, newPageHtml);
+    const updatedParent = getPageByPath(deps.db, parentPath);
+    const newPage = getPageByPath(deps.db, newPath);
+    if (updatedParent === null || newPage === null) {
+      throw new Error("internal: page vanished after create");
+    }
+    recordEdit(deps.db, {
+      page_id: parentId,
+      version: updatedParent.version,
+      user_suggestion: message,
+      validator_reasoning: null,
+      validator_change_summary: summary,
+      previous_html: previousParentHtml,
+      new_html: newParentHtml,
+      ip_hash: ipHash,
+    });
+    recordEdit(deps.db, {
+      page_id: newPage.id,
+      version: newPage.version,
+      user_suggestion: message,
+      validator_reasoning: null,
+      validator_change_summary: summary,
+      previous_html: newPageHtml,
+      new_html: newPageHtml,
+      ip_hash: ipHash,
+    });
+    return { updatedParent, newPage };
+  });
+  let result: { updatedParent: import("./pages.js").Page; newPage: import("./pages.js").Page };
+  try {
+    result = writeAll();
   } catch (err) {
     console.error("commitCreate: write failed", { parentPath, newPath, err });
     return { status: "rejected", reason: `commit failed: ${(err as Error).message}` };
   }
-  const updatedParent = getPageByPath(deps.db, parentPath);
-  const newPage = getPageByPath(deps.db, newPath);
-  if (updatedParent === null || newPage === null) {
-    return { status: "rejected", reason: "internal: page vanished after create" };
-  }
-  recordEdit(deps.db, {
-    page_id: parentId,
-    version: updatedParent.version,
-    user_suggestion: message,
-    validator_reasoning: null,
-    validator_change_summary: summary,
-    previous_html: previousParentHtml,
-    new_html: newParentHtml,
-    ip_hash: ipHash,
-  });
-  recordEdit(deps.db, {
-    page_id: newPage.id,
-    version: newPage.version,
-    user_suggestion: message,
-    validator_reasoning: null,
-    validator_change_summary: summary,
-    previous_html: newPageHtml,
-    new_html: newPageHtml,
-    ip_hash: ipHash,
-  });
-  deps.broadcast?.({ type: "edit", path: parentPath, version: updatedParent.version, summary });
-  deps.broadcast?.({ type: "edit", path: newPath, version: newPage.version, summary });
-  return { status: "accepted", path: parentPath, version: updatedParent.version, summary };
+  deps.broadcast?.({ type: "edit", path: parentPath, version: result.updatedParent.version, summary });
+  deps.broadcast?.({ type: "edit", path: newPath, version: result.newPage.version, summary });
+  return { status: "accepted", path: parentPath, version: result.updatedParent.version, summary };
 }
 
 function normalizePath(raw: string): string {

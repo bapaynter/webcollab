@@ -1,4 +1,4 @@
-import { callJson, type CallOptions } from "./llm.js";
+import { type CallOptions } from "./llm.js";
 
 const SYSTEM_PROMPT = `You are a content moderator for a collaborative website. The user has submitted a suggested change to a small page.
 
@@ -126,5 +126,3 @@ function isParsed(value: unknown): value is ValidatorParsed {
     (v["new_page_slug"] === null || typeof v["new_page_slug"] === "string")
   );
 }
-
-void callJson;

@@ -23,15 +23,23 @@ const ALLOWED_ATTR: ReadonlyArray<string> = [
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto):|#|\/)/i;
 const DATA_TEXT_HTML_PATTERN = /(<(?:a|img|source|video|audio|iframe)[^>]*?\s(?:href|src)\s*=\s*["']?)\s*data:text\/html[^"' >]*/gi;
 
+const DOCTYPE_TAG = "<!DOCTYPE html>";
+
 export function sanitizeHTML(html: string): string {
   const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [...ALLOWED_TAGS],
     ALLOWED_ATTR: [...ALLOWED_ATTR],
     ALLOWED_URI_REGEXP,
-    FORBID_TAGS: ["script", "style", "form", "iframe", "object", "embed", "base", "input", "button", "textarea", "select", "meta", "link"],
-    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onchange", "onsubmit", "onkeydown", "onkeyup", "onkeypress"],
+    ADD_URI_SAFE_ATTR: ["charset", "name", "content", "rel", "media", "type", "sizes"],
+    FORBID_TAGS: ["script", "style", "form", "iframe", "object", "embed", "base", "input", "button", "textarea", "select"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "onchange", "onsubmit", "onkeydown", "onkeyup", "onkeypress", "http-equiv"],
+    WHOLE_DOCUMENT: true,
   });
-  return sanitized.replace(DATA_TEXT_HTML_PATTERN, "$1");
+  const stripped = sanitized.replace(DATA_TEXT_HTML_PATTERN, "$1");
+  if (stripped.toLowerCase().startsWith("<html")) {
+    return DOCTYPE_TAG + stripped;
+  }
+  return stripped;
 }
 
 export function countElements(html: string): number {

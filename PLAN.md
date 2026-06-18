@@ -143,7 +143,7 @@ Verifies that the sanitized parent HTML contains an `<a href="...">` element who
 Response header on every page:
 
 ```
-Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https:; font-src 'self' https://fonts.gstatic.com data:; connect-src 'self' wss: ws: https://fonts.googleapis.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
 ```
 
 The widget's `<script src="/widget.js">` is self-hosted, so the policy is airtight against remote script execution.
@@ -396,6 +396,15 @@ The rollback script updates the DB and the next `GET /<path>` reflects the new s
 - **Storage:** IPs never persisted; only salted hashes.
 - **Secrets:** OpenRouter key + IP_HASH_SALT in /var/www/canvas/.env (not in git).
 - **Process:** PM2 fork mode, single instance, no cluster (LLM calls are I/O bound, not CPU bound).
+
+### CSP `img-src` does not allow `data:`
+
+`data:` URIs in image sources were originally considered for `img-src` but are excluded for v1. Rationale:
+
+- DOMPurify's `ALLOWED_URI_REGEXP` rejects all `data:` URIs in `href`/`src` attributes. A `data:` URI in `img src` would be stripped before reaching the browser.
+- Even if CSP allowed `data:`, the sanitizer strips it. CSP allowance would be security theater.
+- `data:image/svg+xml` can embed JavaScript; even images can be a vector when SVG is involved. Excluding it is the conservative choice.
+- The cost: inline base64 images in suggestions don't work. Acceptable for v1; can revisit if requested.
 
 ### What an attacker can do
 
