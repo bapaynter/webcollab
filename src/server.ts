@@ -1,6 +1,14 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import websocket from "@fastify/websocket";
 import { initDb, type Database } from "./db.js";
+import { getPageByPath } from "./pages.js";
+import { injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = join(__dirname, "..", "public");
 
 export interface ServerOptions {
   readonly dbPath: string;
@@ -23,7 +31,26 @@ export function buildServer(options: ServerOptions): ServerHandle {
   const db = initDb(options.dbPath);
   const fastify = Fastify({ logger: false });
   void fastify.register(websocket);
+
   fastify.get("/healthz", async () => ({ status: "ok" }));
+
+  fastify.get<{ Params: { path: string } }>("/:path", async (request, reply) => {
+    const requested = request.params.path;
+    const pagePath = requested === "" ? "/" : `/${requested}`;
+    const page = getPageByPath(db, pagePath);
+    if (page === null) {
+      reply.code(404);
+      reply.type("text/plain");
+      return "Not Found";
+    }
+    const html = injectWidgetScript(page.current_html);
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
+      reply.header(header, value);
+    }
+    reply.type("text/html; charset=utf-8");
+    return html;
+  });
+
   return {
     fastify,
     db,
@@ -32,4 +59,8 @@ export function buildServer(options: ServerOptions): ServerHandle {
       db.close();
     },
   };
+}
+
+export async function readPublicFile(name: string): Promise<string> {
+  return readFile(join(PUBLIC_DIR, name), "utf-8");
 }

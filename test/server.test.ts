@@ -1,6 +1,8 @@
 import { describe, it, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { buildServer, type ServerHandle } from "../src/server.js";
+import { createPage } from "../src/pages.js";
+import { CONTENT_SECURITY_POLICY } from "../src/seed.js";
 
 describe("server", () => {
   const handles: ServerHandle[] = [];
@@ -22,5 +24,47 @@ describe("server", () => {
     handles.push(handle);
     const response = await handle.fastify.inject({ method: "GET", url: "/healthz" });
     assert.equal(response.statusCode, 200);
+  });
+
+  describe("GET /<path>", () => {
+    it("returns 404 for unknown page", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/nope" });
+      assert.equal(response.statusCode, 404);
+    });
+
+    it("returns 200 and page HTML for known page", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<main>hi</main>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.body, /<main>hi<\/main>/);
+    });
+
+    it("injects widget script into served page", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<main>hi</main>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      assert.match(response.body, /<script src="\/widget\.js"[^>]*><\/script>/);
+    });
+
+    it("applies Content-Security-Policy header", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<main>hi</main>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      assert.equal(response.headers["content-security-policy"], CONTENT_SECURITY_POLICY);
+    });
+
+    it("applies X-Frame-Options: DENY", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      createPage(handle.db, "/foo", "<main>hi</main>");
+      const response = await handle.fastify.inject({ method: "GET", url: "/foo" });
+      assert.equal(response.headers["x-frame-options"], "DENY");
+    });
   });
 });
