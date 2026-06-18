@@ -10,12 +10,14 @@ const ALLOWED_TAGS: ReadonlyArray<string> = [
   "a", "img", "figure", "figcaption",
   "blockquote", "pre", "code", "em", "strong", "b", "i", "u", "br", "hr",
   "table", "thead", "tbody", "tr", "th", "td",
+  "head", "title", "meta", "link",
 ];
 
 const ALLOWED_ATTR: ReadonlyArray<string> = [
   "href", "src", "alt", "title", "class", "id",
   "aria-label", "aria-describedby", "aria-hidden", "role",
   "colspan", "rowspan",
+  "charset", "name", "content", "rel", "media", "type", "sizes",
 ];
 
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto):|#|\/)/i;
@@ -35,6 +37,16 @@ export function sanitizeHTML(html: string): string {
 export function countElements(html: string): number {
   const matches = html.match(/<[a-zA-Z][^>]*>/g);
   return matches ? matches.length : 0;
+}
+
+const BODY_RE = /<body[^>]*>([\s\S]*?)<\/body>/i;
+
+export function countBodyChildren(html: string): number {
+  const match = html.match(BODY_RE);
+  if (match === null) {
+    return countElements(html);
+  }
+  return countElements(match[1] ?? "");
 }
 
 export function checkStructuralDelta(priorCount: number, newCount: number): { ok: true } | { ok: false; reason: string } {

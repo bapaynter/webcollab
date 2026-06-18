@@ -2,7 +2,7 @@ import { isBlocked } from "./preLLMBlocklist.js";
 import { checkCooldown, hashIp, recordAttempt } from "./rateLimit.js";
 import { validate } from "./validator.js";
 import { applyEdit, applyCreate } from "./executor.js";
-import { sanitizeHTML, checkStructuralDelta, countElements } from "./sanitize.js";
+import { sanitizeHTML, checkStructuralDelta, countBodyChildren } from "./sanitize.js";
 import { extract as extractSlug } from "./slugInfer.js";
 import { checkDepth, validatePathFormat } from "./pathPolicy.js";
 import { createPage, getPageByPath, pageExists, updatePageHtml } from "./pages.js";
@@ -132,9 +132,10 @@ async function runEditPipeline(
     return { status: "rejected", reason: executorResult.reason };
   }
   const sanitized = sanitizeHTML(executorResult.html);
+  const sanitizedPrior = sanitizeHTML(page.current_html);
   const structuralCheck = checkStructuralDelta(
-    countElements(page.current_html),
-    countElements(sanitized),
+    countBodyChildren(sanitizedPrior),
+    countBodyChildren(sanitized),
   );
   if (!structuralCheck.ok) {
     return { status: "rejected", reason: structuralCheck.reason };

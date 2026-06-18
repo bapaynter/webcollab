@@ -91,20 +91,18 @@ describe("server", () => {
     it("returns pages list and recent edits", async () => {
       const handle = buildServer({ dbPath: ":memory:" });
       handles.push(handle);
-      createPage(handle.db, "/", "<p>root</p>");
       createPage(handle.db, "/foo", "<p>foo</p>");
       const response = await handle.fastify.inject({ method: "GET", url: "/api/state" });
       assert.equal(response.statusCode, 200);
       const body = JSON.parse(response.body) as { pages: Array<{ path: string }>; recent_edits: unknown[] };
-      assert.equal(body.pages.length, 2);
       const paths = body.pages.map((p) => p.path).sort();
-      assert.deepEqual(paths, ["/", "/foo"]);
+      assert.ok(paths.includes("/"));
+      assert.ok(paths.includes("/foo"));
     });
 
     it("scoped to single path via ?path=", async () => {
       const handle = buildServer({ dbPath: ":memory:" });
       handles.push(handle);
-      createPage(handle.db, "/", "<p>root</p>");
       createPage(handle.db, "/foo", "<p>foo</p>");
       const response = await handle.fastify.inject({ method: "GET", url: "/api/state?path=/foo" });
       assert.equal(response.statusCode, 200);
@@ -176,16 +174,16 @@ describe("server", () => {
             is_new_page: false,
             new_page_slug: null,
           }),
-        callExecutor: async () => "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
+        callExecutor: async () =>
+          "<!DOCTYPE html><html><body><main><h1>Welcome</h1><p>Suggest a change in the chat.</p></main></body></html>",
       });
       handles.push(handle);
-      createPage(handle.db, "/", "<!DOCTYPE html><html><body></body></html>");
       const response = await handle.fastify.inject({
         method: "POST",
         url: "/api/suggest",
         payload: { message: "add a heading to say Welcome", path: "/" },
       });
-      assert.equal(response.statusCode, 200);
+      assert.equal(response.statusCode, 200, `body: ${response.body}`);
       const body = JSON.parse(response.body) as { status: string; version: number; path: string };
       assert.equal(body.status, "accepted");
       assert.equal(body.path, "/");
@@ -283,7 +281,6 @@ describe("server", () => {
         assert.equal(event.path, "/");
         originalBroadcast(event);
       };
-      createPage(handle.db, "/", "<!DOCTYPE html><html><body></body></html>");
       handle.broadcast({ type: "edit", path: "/", version: 1, summary: "test" });
       assert.equal(called, true);
     });

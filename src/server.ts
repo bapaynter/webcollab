@@ -4,6 +4,7 @@ import { initDb, type Database } from "./db.js";
 import { getPageByPath, listPages } from "./pages.js";
 import { listRecentEdits, listRecentEditsForPage } from "./edits.js";
 import { injectWidgetScript, SECURITY_HEADERS } from "./seed.js";
+import { ensureSeed } from "./seedInit.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -42,6 +43,7 @@ export interface BroadcastEvent {
 
 export function buildServer(options: ServerOptions): ServerHandle {
   const db = initDb(options.dbPath);
+  ensureSeed(db, "/");
   const fastify = Fastify({ logger: false });
   void fastify.register(websocket);
 
