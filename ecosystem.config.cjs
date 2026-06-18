@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "canvas",
-      script: "./dist/server.js",
+      script: "./dist/main.js",
       cwd: __dirname,
       instances: 1,
       exec_mode: "fork",

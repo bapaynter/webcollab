@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "A public website where anyone can suggest small, LLM-mediated changes via a chat widget. Approved edits are broadcast to all connected visitors in real time and applied in place.",
   "type": "module",
-  "main": "dist/server.js",
+  "main": "dist/main.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/main.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/main.js",
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
