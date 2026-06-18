@@ -1,7 +1,7 @@
 import { isBlocked } from "./preLLMBlocklist.js";
 import { checkCooldown, hashIp, recordAttempt } from "./rateLimit.js";
 import { validate } from "./validator.js";
-import { applyEdit, applyCreate } from "./executor.js";
+import { applyEdit, applyCreate, isCreatePayload } from "./executor.js";
 import { sanitizeHTML, checkStructuralDelta, countBodyChildren } from "./sanitize.js";
 import { extract as extractSlug } from "./slugInfer.js";
 import { checkDepth, validatePathFormat } from "./pathPolicy.js";
@@ -146,7 +146,15 @@ async function runEditPipeline(
   if (!executorResult.ok) {
     return { status: "rejected", reason: executorResult.reason };
   }
+  if (isCreatePayload(executorResult.html)) {
+    console.error("runEditPipeline: executor returned CREATE payload (defense-in-depth)", { targetPath });
+    return { status: "rejected", reason: "executor returned CREATE payload for EDIT request" };
+  }
   const sanitized = sanitizeHTML(executorResult.html);
+  if (isCreatePayload(sanitized)) {
+    console.error("runEditPipeline: sanitized output still contains CREATE payload", { targetPath });
+    return { status: "rejected", reason: "executor returned CREATE payload for EDIT request" };
+  }
   if (!looksLikeHtmlDocument(sanitized)) {
     console.error("runEditPipeline: sanitized output is not an HTML document", { targetPath, sanitized });
     return { status: "rejected", reason: "executor returned non-HTML content" };

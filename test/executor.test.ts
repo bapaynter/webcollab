@@ -48,6 +48,47 @@ describe("executor", () => {
       const result = await applyEdit(deps, "x", "<html></html>", "/foo");
       assert.equal(result.ok, false);
     });
+
+    it("rejects raw CREATE JSON returned for an EDIT request", async () => {
+      const deps = makeDeps({
+        callLLM: async () =>
+          JSON.stringify({
+            parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          }),
+      });
+      const result = await applyEdit(deps, "add a gallery", "<html><body></body></html>", "/foo");
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.match(result.reason, /CREATE payload/i);
+      }
+    });
+
+    it("rejects HTML-wrapped CREATE JSON returned for an EDIT request", async () => {
+      const wrapped =
+        '<!DOCTYPE html><html><body>{"parent_html":"<html><body><a href=\\"/foo/gallery\\">Gallery</a></body></html>","new_html":"<html><body><h1>Gallery</h1></body></html>"}</body></html>';
+      const deps = makeDeps({
+        callLLM: async () => wrapped,
+      });
+      const result = await applyEdit(deps, "add a gallery", "<html><body></body></html>", "/foo");
+      assert.equal(result.ok, false, `expected rejection, got: ${JSON.stringify(result)}`);
+      if (!result.ok) {
+        assert.match(result.reason, /CREATE payload/i);
+      }
+    });
+
+    it("rejects entity-escaped HTML-wrapped CREATE JSON for an EDIT request", async () => {
+      const wrapped =
+        '<!DOCTYPE html><html><body>{&quot;parent_html&quot;:&quot;&lt;html&gt;&lt;body&gt;&lt;a href=\\&quot;/foo/gallery\\&quot;&gt;Gallery&lt;/a&gt;&lt;/body&gt;&lt;/html&gt;&quot;,&quot;new_html&quot;:&quot;&lt;html&gt;&lt;body&gt;&lt;h1&gt;Gallery&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;&quot;}</body></html>';
+      const deps = makeDeps({
+        callLLM: async () => wrapped,
+      });
+      const result = await applyEdit(deps, "x", "<html><body></body></html>", "/foo");
+      assert.equal(result.ok, false, `expected rejection, got: ${JSON.stringify(result)}`);
+      if (!result.ok) {
+        assert.match(result.reason, /CREATE payload/i);
+      }
+    });
   });
 
   describe("applyCreate", () => {

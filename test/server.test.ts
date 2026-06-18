@@ -294,6 +294,36 @@ describe("server", () => {
       assert.equal(body.path, "/");
       assert.equal(body.version, 1);
     });
+
+    it("rejects 422 when executor returns HTML-wrapped CREATE payload (page stays clean)", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "edit",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () =>
+          '<!DOCTYPE html><html><body>{"parent_html":"<html><body><a href=\\"/foo/gallery\\">G</a></body></html>","new_html":"<html><body><h1>G</h1></body></html>"}</body></html>',
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "change the heading", path: "/" },
+      });
+      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      const body = JSON.parse(response.body) as { reason: string };
+      assert.match(body.reason, /CREATE payload/i);
+      const pageRes = await handle.fastify.inject({ method: "GET", url: "/api/page?path=/" });
+      const pageBody = JSON.parse(pageRes.body) as { html: string };
+      assert.ok(!/"parent_html"/.test(pageBody.html), "stored html must not contain create-payload JSON");
+      assert.ok(!/\\&quot;/.test(pageBody.html), "stored html must not contain escaped quote corruption");
+    });
   });
 
   describe("POST /api/suggest (creates)", () => {
