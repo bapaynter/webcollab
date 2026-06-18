@@ -36,5 +36,30 @@ describe("config", () => {
     assert.equal(config.maxPageDepth, 4);
     assert.equal(config.port, 3131);
     assert.equal(config.host, "127.0.0.1");
+    assert.equal(config.rateLimitEnabled, false);
+  });
+
+  it("rateLimitEnabled defaults to false", () => {
+    process.env["IP_HASH_SALT"] = "a".repeat(64);
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    delete process.env["RATE_LIMIT_ENABLED"];
+    const config = loadConfig();
+    assert.equal(config.rateLimitEnabled, false);
+  });
+
+  it("rateLimitEnabled parses 'true' as true", () => {
+    process.env["IP_HASH_SALT"] = "a".repeat(64);
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    process.env["RATE_LIMIT_ENABLED"] = "true";
+    const config = loadConfig();
+    assert.equal(config.rateLimitEnabled, true);
+  });
+
+  it("rateLimitEnabled parses '1' as true", () => {
+    process.env["IP_HASH_SALT"] = "a".repeat(64);
+    process.env["OPENROUTER_API_KEY"] = "test-key";
+    process.env["RATE_LIMIT_ENABLED"] = "1";
+    const config = loadConfig();
+    assert.equal(config.rateLimitEnabled, true);
   });
 });

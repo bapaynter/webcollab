@@ -195,6 +195,67 @@ describe("server", () => {
       assert.equal(response.statusCode, 400);
     });
 
+    it("does not enforce cooldown when rateLimitEnabled is false (default)", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "ok",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () =>
+          "<!DOCTYPE html><html><body><main><h1>v1</h1></main></body></html>",
+      });
+      handles.push(handle);
+      const first = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "first", path: "/" },
+      });
+      assert.equal(first.statusCode, 200, `body: ${first.body}`);
+      const second = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "second", path: "/" },
+      });
+      assert.equal(second.statusCode, 200, `body: ${second.body}`);
+    });
+
+    it("enforces cooldown when rateLimitEnabled is true", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        rateLimitEnabled: true,
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "ok",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () =>
+          "<!DOCTYPE html><html><body><main><h1>v1</h1></main></body></html>",
+      });
+      handles.push(handle);
+      const first = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "first", path: "/" },
+      });
+      assert.equal(first.statusCode, 200, `body: ${first.body}`);
+      const second = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "second", path: "/" },
+      });
+      assert.equal(second.statusCode, 429, `body: ${second.body}`);
+    });
+
     it("returns 422 on pre-LLM blocklist hit", async () => {
       const handle = buildServer({ dbPath: ":memory:" });
       handles.push(handle);

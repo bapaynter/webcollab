@@ -23,6 +23,7 @@ export interface ServerOptions {
   readonly cooldownMinutes?: number;
   readonly ipHashSalt?: string;
   readonly maxPageDepth?: number;
+  readonly rateLimitEnabled?: boolean;
   readonly callLLM?: (options: CallOptions) => Promise<string>;
   readonly callExecutor?: (options: CallOptions) => Promise<string>;
 }
@@ -71,6 +72,7 @@ export function buildServer(options: ServerOptions): ServerHandle {
     cooldownMinutes: options.cooldownMinutes ?? 60,
     ipHashSalt: options.ipHashSalt ?? "a".repeat(64),
     maxPageDepth: options.maxPageDepth ?? 4,
+    rateLimitEnabled: options.rateLimitEnabled ?? false,
     callLLM,
     callExecutor,
     broadcast,

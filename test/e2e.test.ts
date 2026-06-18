@@ -159,7 +159,7 @@ describe("end-to-end", () => {
     });
 
     it("429 on cooldown", async () => {
-      const handle = buildServer({ dbPath: ":memory:" });
+      const handle = buildServer({ dbPath: ":memory:", rateLimitEnabled: true });
       handles.push(handle);
       await handle.fastify.listen({ port: 0, host: "127.0.0.1" });
       const port = (handle.fastify.server.address() as { port: number }).port;

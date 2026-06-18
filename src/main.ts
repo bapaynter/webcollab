@@ -11,6 +11,7 @@ const handle = buildServer({
   cooldownMinutes: config.cooldownMinutes,
   ipHashSalt: config.ipHashSalt,
   maxPageDepth: config.maxPageDepth,
+  rateLimitEnabled: config.rateLimitEnabled,
 });
 
 await handle.fastify.listen({ port: config.port, host: config.host });

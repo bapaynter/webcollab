@@ -10,6 +10,7 @@ export interface Config {
   readonly host: string;
   readonly logLevel: string;
   readonly canvasDataDir: string;
+  readonly rateLimitEnabled: boolean;
 }
 
 export function loadConfig(): Config {
@@ -27,6 +28,7 @@ export function loadConfig(): Config {
     host: process.env["HOST"] ?? "127.0.0.1",
     logLevel: process.env["LOG_LEVEL"] ?? "info",
     canvasDataDir: process.env["CANVAS_DATA_DIR"] ?? "./data",
+    rateLimitEnabled: parseBoolEnv("RATE_LIMIT_ENABLED", false),
   };
 }
 
@@ -48,4 +50,12 @@ function parseIntEnv(name: string, fallback: number): number {
     throw new Error(`${name} must be an integer, got: ${raw}`);
   }
   return parsed;
+}
+
+function parseBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+  return raw === "true" || raw === "1";
 }
