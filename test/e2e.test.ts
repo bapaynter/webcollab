@@ -2,21 +2,6 @@ import { describe, it, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { WebSocket } from "ws";
 import { buildServer, type ServerHandle } from "../src/server.js";
-import { callChat, type CallOptions } from "../src/llm.js";
-
-function stubLLM(responses: ReadonlyMap<string, string>): (options: CallOptions) => Promise<string> {
-  return async (options: CallOptions) => {
-    const last = options.messages[options.messages.length - 1];
-    if (last === undefined) throw new Error("no messages");
-    const key = last.content.slice(0, 80);
-    const response = responses.get(key) ?? responses.get("__default__");
-    if (response === undefined) {
-      throw new Error(`no stub for: ${key.slice(0, 60)}`);
-    }
-    void callChat;
-    return response;
-  };
-}
 
 describe("end-to-end", () => {
   const handles: ServerHandle[] = [];
@@ -81,8 +66,6 @@ describe("end-to-end", () => {
 
     ws.close();
   });
-
-  void stubLLM;
 
   it("new-page flow: creates new page, links from parent, emits two ws events", async () => {
     const executorResponse = JSON.stringify({

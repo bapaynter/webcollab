@@ -31,10 +31,5 @@ export function recordAttempt(db: Database, ipHash: string, cooldownMinutes: num
        last_suggestion_at = excluded.last_suggestion_at,
        cooldown_until = excluded.cooldown_until,
        total_attempts = total_attempts + 1`,
-  ).run(ipHash, now, cooldownUntil);
-}
-
-export function bumpCooldownMinutes(db: Database, ipHash: string, minutes: number): void {
-  const cooldownUntil = new Date(Date.now() + minutes * 60 * 1000).toISOString();
-  db.prepare("UPDATE rate_limits SET cooldown_until = ? WHERE ip_hash = ?").run(cooldownUntil, ipHash);
+      ).run(ipHash, now, cooldownUntil);
 }

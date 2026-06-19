@@ -8,7 +8,6 @@ export interface Config {
   readonly maxPageDepth: number;
   readonly port: number;
   readonly host: string;
-  readonly logLevel: string;
   readonly canvasDataDir: string;
   readonly rateLimitEnabled: boolean;
 }
@@ -26,7 +25,6 @@ export function loadConfig(): Config {
     maxPageDepth: parseIntEnv("MAX_PAGE_DEPTH", 4),
     port: parseIntEnv("PORT", 3131),
     host: process.env["HOST"] ?? "127.0.0.1",
-    logLevel: process.env["LOG_LEVEL"] ?? "info",
     canvasDataDir: process.env["CANVAS_DATA_DIR"] ?? "./data",
     rateLimitEnabled: parseBoolEnv("RATE_LIMIT_ENABLED", false),
   };
