@@ -53,6 +53,8 @@ Output format (CREATE):
 }
 - Do NOT return an HTML document. The response must be a single JSON object parseable by JSON.parse.`;
 
+const EXECUTOR_TIMEOUT_MS = 180_000;
+
 export interface ExecutorDeps {
   readonly apiKey: string;
   readonly model: string;
@@ -85,6 +87,7 @@ export async function applyEdit(
       ],
       maxTokens: deps.maxTokens,
       temperature: 0,
+      timeoutMs: EXECUTOR_TIMEOUT_MS,
     });
   } catch (err) {
     console.error("executor.applyEdit: LLM call failed", err);
@@ -140,6 +143,7 @@ export async function applyCreate(
       maxTokens: deps.maxTokens,
       temperature: 0,
       jsonMode: true,
+      timeoutMs: EXECUTOR_TIMEOUT_MS,
     });
   } catch (err) {
     console.error("executor.applyCreate: LLM call failed", err);

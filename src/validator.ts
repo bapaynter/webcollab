@@ -62,6 +62,8 @@ export interface ValidatorDeps {
   readonly callLLM: (options: CallOptions) => Promise<string>;
 }
 
+const VALIDATOR_TIMEOUT_MS = 15_000;
+
 export type ValidatorResult =
   | { ok: true; allowed: true; reason: string; change_summary: string; is_new_page: boolean; new_page_slug: string | null; detail?: string }
   | { ok: true; allowed: false; reason: string; change_summary: string; is_new_page: boolean; new_page_slug: string | null; detail?: string }
@@ -93,6 +95,7 @@ export async function validate(
       ],
       jsonMode: true,
       temperature: 0,
+      timeoutMs: VALIDATOR_TIMEOUT_MS,
     });
   } catch (err) {
     console.error("validator: LLM call failed", err);

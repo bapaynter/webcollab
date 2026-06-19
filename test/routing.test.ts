@@ -13,6 +13,20 @@ describe("suggest routing (LLM-based)", () => {
     }
   });
 
+  async function waitForTerminalStatus(handle: ServerHandle, requestId: string): Promise<{ status: string }> {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const response = await handle.fastify.inject({ method: "GET", url: `/api/suggest/${requestId}` });
+      if (response.statusCode === 200) {
+        const body = JSON.parse(response.body) as { status: string };
+        if (body.status === "accepted" || body.status === "rejected" || body.status === "failed") {
+          return body;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`timed out waiting for suggest status: ${requestId}`);
+  }
+
   function validatorOk(overrides: Record<string, unknown> = {}): (opts: CallOptions) => Promise<string> {
     return async () =>
       JSON.stringify({
@@ -43,7 +57,10 @@ describe("suggest routing (LLM-based)", () => {
       url: "/api/suggest",
       payload: { message: "create a more welcoming vibe on this page", path: "/foo" },
     });
-    assert.equal(response.statusCode, 200, `body: ${response.body}`);
+    assert.equal(response.statusCode, 202, `body: ${response.body}`);
+    const queued = JSON.parse(response.body) as { request_id: string };
+    const terminal = await waitForTerminalStatus(handle, queued.request_id);
+    assert.equal(terminal.status, "accepted");
     assert.equal(executorCalls.length, 1, "executor should be called exactly once (edit, not create)");
     const userPrompt = executorCalls[0]?.messages[1]?.content ?? "";
     assert.ok(!userPrompt.includes("parent_html"), "executor should receive EDIT prompt, not CREATE prompt");
@@ -69,7 +86,10 @@ describe("suggest routing (LLM-based)", () => {
       url: "/api/suggest",
       payload: { message: "make this place cooler", path: "/foo" },
     });
-    assert.equal(response.statusCode, 200, `body: ${response.body}`);
+    assert.equal(response.statusCode, 202, `body: ${response.body}`);
+    const queued = JSON.parse(response.body) as { request_id: string };
+    const terminal = await waitForTerminalStatus(handle, queued.request_id);
+    assert.equal(terminal.status, "accepted");
     assert.equal(executorCalls.length, 1, "executor should be called exactly once (create)");
     const newPageResponse = await handle.fastify.inject({ method: "GET", url: "/foo/gallery" });
     assert.equal(newPageResponse.statusCode, 200, `new page should exist: ${newPageResponse.body}`);
@@ -91,7 +111,10 @@ describe("suggest routing (LLM-based)", () => {
       url: "/api/suggest",
       payload: { message: "create a blog", path: "/" },
     });
-    assert.equal(response.statusCode, 200, `body: ${response.body}`);
+    assert.equal(response.statusCode, 202, `body: ${response.body}`);
+    const queued = JSON.parse(response.body) as { request_id: string };
+    const terminal = await waitForTerminalStatus(handle, queued.request_id);
+    assert.equal(terminal.status, "accepted");
     const newPage = await handle.fastify.inject({ method: "GET", url: "/blog" });
     assert.equal(newPage.statusCode, 200);
   });
@@ -112,7 +135,10 @@ describe("suggest routing (LLM-based)", () => {
       url: "/api/suggest",
       payload: { message: "add a gallery", path: "/" },
     });
-    assert.equal(response.statusCode, 200, `body: ${response.body}`);
+    assert.equal(response.statusCode, 202, `body: ${response.body}`);
+    const queued = JSON.parse(response.body) as { request_id: string };
+    const terminal = await waitForTerminalStatus(handle, queued.request_id);
+    assert.equal(terminal.status, "accepted");
     const newPage = await handle.fastify.inject({ method: "GET", url: "/gallery" });
     assert.equal(newPage.statusCode, 200);
   });
@@ -222,7 +248,10 @@ describe("suggest routing (LLM-based)", () => {
       url: "/api/suggest",
       payload: { message: "make the heading bigger", path: "/foo" },
     });
-    assert.equal(response.statusCode, 200, `body: ${response.body}`);
+    assert.equal(response.statusCode, 202, `body: ${response.body}`);
+    const queued = JSON.parse(response.body) as { request_id: string };
+    const terminal = await waitForTerminalStatus(handle, queued.request_id);
+    assert.equal(terminal.status, "accepted");
     assert.equal(executorCalls.length, 1);
   });
 });

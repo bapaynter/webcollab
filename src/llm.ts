@@ -13,11 +13,12 @@ export interface CallOptions {
   readonly maxTokens?: number;
   readonly temperature?: number;
   readonly jsonMode?: boolean;
+  readonly timeoutMs?: number;
 }
 
 export async function callChat(options: CallOptions): Promise<string> {
   const body = buildRequestBody(options);
-  const response = await postWithTimeout(OPENROUTER_URL, options.apiKey, body);
+  const response = await postWithTimeout(OPENROUTER_URL, options.apiKey, body, options.timeoutMs);
   return await extractContent(response);
 }
 
@@ -48,9 +49,10 @@ function buildRequestBody(options: CallOptions): string {
   return JSON.stringify(payload);
 }
 
-async function postWithTimeout(url: string, apiKey: string, body: string): Promise<Response> {
+async function postWithTimeout(url: string, apiKey: string, body: string, timeoutMs?: number): Promise<Response> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const effectiveTimeoutMs = timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), effectiveTimeoutMs);
   try {
     return await fetch(url, {
       method: "POST",

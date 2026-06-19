@@ -10,8 +10,20 @@ import { renderLogPage } from "./logPage.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { callChat, type CallOptions } from "./llm.js";
-import { runSuggest, type SuggestDeps } from "./suggest.js";
+import { executeQueuedSuggestion, prepareSuggest, type SuggestDeps } from "./suggest.js";
+import {
+  claimNextQueuedSuggestionJob,
+  enqueueSuggestionJob,
+  getSuggestionJobByRequestId,
+  markSuggestionJobAccepted,
+  markSuggestionJobFailed,
+  markSuggestionJobRejected,
+  pruneOldSuggestionJobs,
+  type SuggestionJob,
+} from "./suggestionJobs.js";
+import { hashIp } from "./rateLimit.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
@@ -34,15 +46,21 @@ export interface ServerHandle {
   readonly fastify: FastifyInstance;
   readonly db: Database;
   readonly close: () => Promise<void>;
-  readonly broadcast: (event: { type: "edit"; path: string; version: number; summary: string }) => void;
+  broadcast: (event: BroadcastEvent) => void;
 }
 
-export interface BroadcastEvent {
-  readonly type: "edit";
-  readonly path: string;
-  readonly version: number;
-  readonly summary: string;
-}
+export type BroadcastEvent =
+  | { type: "edit"; path: string; version: number; summary: string }
+  | {
+      type: "suggestion.completed";
+      request_id: string;
+      path: string;
+      status: "accepted" | "rejected" | "failed";
+      summary?: string;
+      reason?: string;
+      hint?: string;
+      version?: number;
+    };
 
 interface SuggestRejectedResult {
   readonly status: "rejected";
@@ -96,6 +114,41 @@ export function buildServer(options: ServerOptions): ServerHandle {
     callExecutor,
     broadcast,
   };
+
+  let isWorkerRunning = false;
+  let isClosed = false;
+  let nextPruneAt = Date.now();
+  const WORKER_INTERVAL_MS = 750;
+  const PRUNE_INTERVAL_MS = 60_000;
+  const JOB_RETENTION_DAYS = 7;
+
+  const processQueueOnce = async (): Promise<void> => {
+    if (isClosed || isWorkerRunning) {
+      return;
+    }
+    isWorkerRunning = true;
+    try {
+      const now = Date.now();
+      if (now >= nextPruneAt) {
+        pruneOldSuggestionJobs(db, JOB_RETENTION_DAYS);
+        nextPruneAt = now + PRUNE_INTERVAL_MS;
+      }
+      const job = claimNextQueuedSuggestionJob(db);
+      if (job === null) {
+        return;
+      }
+      await processQueuedJob(job, suggestDeps, db, broadcast);
+      void setImmediate(() => {
+        void processQueueOnce();
+      });
+    } finally {
+      isWorkerRunning = false;
+    }
+  };
+
+  const workerInterval = setInterval(() => {
+    void processQueueOnce();
+  }, WORKER_INTERVAL_MS);
 
   fastify.get("/healthz", async () => ({ status: "ok" }));
 
@@ -156,13 +209,30 @@ export function buildServer(options: ServerOptions): ServerHandle {
   fastify.post<{ Body: { message?: string; path?: string } }>("/api/suggest", async (request, reply) => {
     const body = request.body ?? {};
     const ip = request.ip;
-    const result = await runSuggest(suggestDeps, {
+    const result = await prepareSuggest(suggestDeps, {
       message: body.message ?? "",
       path: body.path,
       ip,
     });
-    if (result.status === "accepted") {
-      return result;
+    if (result.status === "queued") {
+      const requestId = randomUUID();
+      const job = enqueueSuggestionJob(db, {
+        requestId,
+        path: result.suggestion.path,
+        newPath: result.suggestion.newPath,
+        message: result.suggestion.message,
+        ipHash: result.suggestion.ipHash,
+        action: result.suggestion.action,
+        changeSummary: result.suggestion.changeSummary,
+      });
+      void processQueueOnce();
+      reply.code(202);
+      return {
+        status: "queued",
+        request_id: requestId,
+        path: job.path,
+        queued_at: job.created_at,
+      };
     }
     const payload = buildSuggestErrorPayload(result);
     if (
@@ -179,6 +249,56 @@ export function buildServer(options: ServerOptions): ServerHandle {
     }
     reply.code(422);
     return payload;
+  });
+
+  fastify.get<{ Params: { requestId: string } }>("/api/suggest/:requestId", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const requestId = request.params.requestId;
+    const job = getSuggestionJobByRequestId(db, requestId);
+    if (job === null) {
+      reply.code(404);
+      return { error: "not found" };
+    }
+    const callerHash = hashIp(suggestDeps.ipHashSalt, request.ip);
+    if (job.ip_hash !== callerHash) {
+      reply.code(404);
+      return { error: "not found" };
+    }
+    if (job.state === "pruned") {
+      reply.code(410);
+      return { error: "gone" };
+    }
+    if (job.state === "accepted") {
+      return {
+        request_id: job.request_id,
+        status: "accepted",
+        path: job.path,
+        queued_at: job.created_at,
+        updated_at: job.updated_at,
+        summary: job.result_summary,
+        version: job.result_version,
+      };
+    }
+    if (job.state === "rejected" || job.state === "failed") {
+      const reason = job.result_reason ?? "internal: background worker failed";
+      const mapped = buildSuggestErrorPayload({ status: "rejected", reason });
+      return {
+        request_id: job.request_id,
+        status: job.state,
+        path: job.path,
+        queued_at: job.created_at,
+        updated_at: job.updated_at,
+        reason: mapped.user_message,
+        hint: mapped.hint,
+      };
+    }
+    return {
+      request_id: job.request_id,
+      status: job.state,
+      path: job.path,
+      queued_at: job.created_at,
+      updated_at: job.updated_at,
+    };
   });
 
   fastify.post<{ Body: { path?: string; versions?: number; toSeed?: boolean } }>(
@@ -260,10 +380,65 @@ export function buildServer(options: ServerOptions): ServerHandle {
     db,
     broadcast,
     async close() {
+      isClosed = true;
+      clearInterval(workerInterval);
       await fastify.close();
       db.close();
     },
   };
+}
+
+async function processQueuedJob(
+  job: SuggestionJob,
+  deps: SuggestDeps,
+  db: Database,
+  broadcast: (event: BroadcastEvent) => void,
+): Promise<void> {
+  try {
+    const result = await executeQueuedSuggestion(deps, {
+      path: job.path,
+      message: job.message,
+      ipHash: job.ip_hash,
+      changeSummary: job.change_summary,
+      action: job.action,
+      newPath: job.new_path,
+    });
+    if (result.status === "accepted") {
+      markSuggestionJobAccepted(db, job.request_id, result.summary, result.version);
+      broadcast({
+        type: "suggestion.completed",
+        request_id: job.request_id,
+        path: result.path,
+        status: "accepted",
+        summary: result.summary,
+        version: result.version,
+      });
+      return;
+    }
+    markSuggestionJobRejected(db, job.request_id, result.reason);
+    const mapped = buildSuggestErrorPayload({ status: "rejected", reason: result.reason });
+    broadcast({
+      type: "suggestion.completed",
+      request_id: job.request_id,
+      path: job.path,
+      status: "rejected",
+      reason: mapped.user_message,
+      hint: mapped.hint,
+    });
+  } catch (err) {
+    console.error("processQueuedJob: execution failed", err);
+    const reason = "internal: background worker failed";
+    markSuggestionJobFailed(db, job.request_id, reason);
+    const mapped = buildSuggestErrorPayload({ status: "rejected", reason });
+    broadcast({
+      type: "suggestion.completed",
+      request_id: job.request_id,
+      path: job.path,
+      status: "failed",
+      reason: mapped.user_message,
+      hint: mapped.hint,
+    });
+  }
 }
 
 function buildSuggestErrorPayload(rejected: SuggestRejectedResult): SuggestErrorPayload {

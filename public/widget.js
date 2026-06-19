@@ -10,7 +10,9 @@
   const SUBMIT_ID = "canvas-submit";
   const WS_PATH = "/ws";
   const SUGGEST_PATH = "/api/suggest";
+  const SUGGEST_STATUS_PATH = "/api/suggest/";
   const RECONNECT_DELAY_MS = 2000;
+  const POLL_MAX_DELAY_MS = 8000;
   const MAX_MESSAGE_LENGTH = 500;
   const INPUT_MIN_ROWS = 1;
   const INPUT_MAX_ROWS = 8;
@@ -21,12 +23,13 @@
 
   function appendLog(status, text) {
     const log = document.getElementById(LOG_ID);
-    if (log === null) return;
+    if (log === null) return null;
     const entry = document.createElement("div");
     entry.className = "canvas-log-entry canvas-log-" + status;
     entry.textContent = text;
     log.appendChild(entry);
     log.scrollTop = log.scrollHeight;
+    return entry;
   }
 
   function injectStyle() {
@@ -169,6 +172,92 @@
     return "";
   }
 
+  const pendingRequests = new Map();
+
+  function setPendingRequest(requestId, entry) {
+    pendingRequests.set(requestId, { entry: entry, pollDelayMs: 1000, pollTimer: null, done: false });
+  }
+
+  function clearPendingRequest(requestId) {
+    const pending = pendingRequests.get(requestId);
+    if (!pending) return;
+    if (pending.pollTimer !== null) {
+      clearTimeout(pending.pollTimer);
+    }
+    pendingRequests.delete(requestId);
+  }
+
+  function applyCompletion(update) {
+    const requestId = typeof update.request_id === "string" ? update.request_id : "";
+    if (requestId === "") return;
+    const pending = pendingRequests.get(requestId);
+    if (!pending) return;
+    if (pending.done) return;
+    pending.done = true;
+    if (pending.pollTimer !== null) {
+      clearTimeout(pending.pollTimer);
+      pending.pollTimer = null;
+    }
+    const status = typeof update.status === "string" ? update.status : "failed";
+    if (status === "accepted") {
+      const summary = typeof update.summary === "string" && update.summary !== "" ? update.summary : "(no summary)";
+      const version = typeof update.version === "number" ? " v" + update.version : "";
+      pending.entry.textContent = "\u2713" + version + ": " + summary;
+      pending.entry.className = "canvas-log-entry canvas-log-accepted";
+      clearPendingRequest(requestId);
+      return;
+    }
+    const reason = typeof update.reason === "string" && update.reason !== "" ? update.reason : "request was rejected";
+    pending.entry.textContent = "\u2717 " + reason;
+    pending.entry.className = "canvas-log-entry canvas-log-rejected";
+    if (typeof update.hint === "string" && update.hint !== "") {
+      appendLog("info", update.hint);
+    }
+    clearPendingRequest(requestId);
+  }
+
+  async function pollSuggestStatus(requestId) {
+    const pending = pendingRequests.get(requestId);
+    if (!pending || pending.done) return;
+    try {
+      const response = await fetch(SUGGEST_STATUS_PATH + encodeURIComponent(requestId), { cache: "no-store" });
+      if (response.status === 404 || response.status === 410) {
+        pending.entry.textContent = "\u2717 request no longer available";
+        pending.entry.className = "canvas-log-entry canvas-log-rejected";
+        clearPendingRequest(requestId);
+        return;
+      }
+      if (!response.ok) {
+        scheduleStatusPoll(requestId);
+        return;
+      }
+      const body = await response.json().catch(function () {
+        return {};
+      });
+      if (body && (body.status === "accepted" || body.status === "rejected" || body.status === "failed")) {
+        applyCompletion(body);
+        return;
+      }
+      scheduleStatusPoll(requestId);
+    } catch (err) {
+      console.warn("canvas widget: status poll failed", err);
+      scheduleStatusPoll(requestId);
+    }
+  }
+
+  function scheduleStatusPoll(requestId) {
+    const pending = pendingRequests.get(requestId);
+    if (!pending || pending.done) return;
+    const delay = pending.pollDelayMs;
+    pending.pollDelayMs = Math.min(POLL_MAX_DELAY_MS, pending.pollDelayMs * 2);
+    pending.pollTimer = window.setTimeout(function () {
+      pending.pollTimer = null;
+      pollSuggestStatus(requestId).catch(function (err) {
+        console.warn("canvas widget: status poll loop failed", err);
+      });
+    }, delay);
+  }
+
   async function onSubmit(event) {
     event.preventDefault();
     const input = document.getElementById(INPUT_ID);
@@ -183,7 +272,14 @@
         body: JSON.stringify({ message: message, path: currentPath() }),
       });
       const body = await response.json().catch(() => ({}));
-      if (response.status === 200 && body.status === "accepted") {
+      if (response.status === 202 && body.status === "queued" && typeof body.request_id === "string") {
+        const queuedEntry = appendLog("info", "\u2026 queued request");
+        if (queuedEntry !== null) {
+          setPendingRequest(body.request_id, queuedEntry);
+          scheduleStatusPoll(body.request_id);
+        }
+        resetInput();
+      } else if (response.status === 200 && body.status === "accepted") {
         appendLog("accepted", "✓ v" + body.version + ": " + (body.summary || "(no summary)"));
         resetInput();
       } else {
@@ -320,6 +416,10 @@
       }
       if (parsed && parsed.type === "edit") {
         handleEditEvent(parsed);
+        return;
+      }
+      if (parsed && parsed.type === "suggestion.completed") {
+        applyCompletion(parsed);
       }
     });
     socket.addEventListener("close", scheduleReconnect);

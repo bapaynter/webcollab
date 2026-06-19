@@ -29,6 +29,19 @@ export type SuggestResponse =
   | { status: "accepted"; path: string; version: number; summary: string }
   | { status: "rejected"; reason: string; until?: string };
 
+export interface QueuedSuggestion {
+  readonly path: string;
+  readonly message: string;
+  readonly ipHash: string;
+  readonly changeSummary: string;
+  readonly action: "edit" | "create";
+  readonly newPath: string | null;
+}
+
+export type PreparedSuggestResponse =
+  | { status: "queued"; suggestion: QueuedSuggestion }
+  | { status: "rejected"; reason: string; until?: string };
+
 export interface SuggestInput {
   readonly message: string;
   readonly path?: string;
@@ -38,6 +51,14 @@ export interface SuggestInput {
 const MAX_MESSAGE_LENGTH = 500;
 
 export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promise<SuggestResponse> {
+  const prepared = await prepareSuggest(deps, input);
+  if (prepared.status === "rejected") {
+    return prepared;
+  }
+  return await executeQueuedSuggestion(deps, prepared.suggestion);
+}
+
+export async function prepareSuggest(deps: SuggestDeps, input: SuggestInput): Promise<PreparedSuggestResponse> {
   const message = input.message.trim();
   if (message.length === 0) {
     return { status: "rejected", reason: "empty message" };
@@ -98,10 +119,58 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
     if (!slugResolution.ok) {
       return { status: "rejected", reason: slugResolution.reason };
     }
-    return await runCreatePipeline(deps, message, targetPath, slugResolution.path, validatorResult.change_summary, ipHash);
+    return {
+      status: "queued",
+      suggestion: {
+        path: targetPath,
+        message,
+        ipHash,
+        changeSummary: validatorResult.change_summary,
+        action: "create",
+        newPath: slugResolution.path,
+      },
+    };
   }
 
-  return await runEditPipeline(deps, message, page, targetPath, validatorResult.change_summary, ipHash);
+  return {
+    status: "queued",
+    suggestion: {
+      path: targetPath,
+      message,
+      ipHash,
+      changeSummary: validatorResult.change_summary,
+      action: "edit",
+      newPath: null,
+    },
+  };
+}
+
+export async function executeQueuedSuggestion(deps: SuggestDeps, suggestion: QueuedSuggestion): Promise<SuggestResponse> {
+  if (suggestion.action === "create") {
+    if (suggestion.newPath === null) {
+      return { status: "rejected", reason: "internal: create job missing new path" };
+    }
+    return await runCreatePipeline(
+      deps,
+      suggestion.message,
+      suggestion.path,
+      suggestion.newPath,
+      suggestion.changeSummary,
+      suggestion.ipHash,
+    );
+  }
+  const page = getPageByPath(deps.db, suggestion.path);
+  if (page === null) {
+    return { status: "rejected", reason: "page not found" };
+  }
+  return await runEditPipeline(
+    deps,
+    suggestion.message,
+    page,
+    suggestion.path,
+    suggestion.changeSummary,
+    suggestion.ipHash,
+  );
 }
 
 function resolveNewPagePath(

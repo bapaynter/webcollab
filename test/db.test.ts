@@ -9,7 +9,7 @@ describe("db", () => {
     db = initDb(":memory:");
   });
 
-  it("creates pages, edits, rate_limits tables", () => {
+  it("creates pages, edits, rate_limits, suggestion_jobs tables", () => {
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all() as Array<{ name: string }>;
@@ -17,6 +17,7 @@ describe("db", () => {
     assert.ok(names.includes("pages"));
     assert.ok(names.includes("edits"));
     assert.ok(names.includes("rate_limits"));
+    assert.ok(names.includes("suggestion_jobs"));
   });
 
   it("pages table has expected columns", () => {

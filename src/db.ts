@@ -47,6 +47,29 @@ CREATE TABLE IF NOT EXISTS llm_failures (
   detail        TEXT,
   created_at    TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS suggestion_jobs (
+  id              INTEGER PRIMARY KEY,
+  request_id      TEXT UNIQUE NOT NULL,
+  path            TEXT NOT NULL,
+  new_path        TEXT,
+  message         TEXT NOT NULL,
+  ip_hash         TEXT NOT NULL,
+  action          TEXT NOT NULL,
+  change_summary  TEXT NOT NULL,
+  state           TEXT NOT NULL,
+  result_reason   TEXT,
+  result_summary  TEXT,
+  result_version  INTEGER,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  started_at      TEXT,
+  finished_at     TEXT,
+  attempts        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_suggestion_jobs_state_created
+ON suggestion_jobs(state, created_at);
 `;
 
 export function initDb(path: string): Database {
