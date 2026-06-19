@@ -15,6 +15,18 @@ describe("linkGuard", () => {
     assert.equal(result.ok, true);
   });
 
+  it("passes with ./ relative href", () => {
+    const html = `<main><h1>x</h1><a href="./bar">go</a></main>`;
+    const result = verify(html, "/foo", "/foo/bar");
+    assert.equal(result.ok, true);
+  });
+
+  it("passes with ../ relative href", () => {
+    const html = `<main><h1>x</h1><a href="../baz">go</a></main>`;
+    const result = verify(html, "/foo/bar", "/foo/baz");
+    assert.equal(result.ok, true);
+  });
+
   it("fails when no <a> exists", () => {
     const html = `<main><h1>x</h1></main>`;
     const result = verify(html, "/foo", "/foo/bar");

@@ -55,8 +55,7 @@ function findAnchorToPath(node: Record<string, unknown>, parentPath: string, tar
 }
 
 function resolveRelative(parentPath: string, href: string): string {
-  if (parentPath === "/") {
-    return `/${href}`;
-  }
-  return `${parentPath}/${href}`;
+  const basePath = parentPath === "/" ? "/" : `${parentPath}/`;
+  const resolved = new URL(href, `https://canvas.local${basePath}`);
+  return resolved.pathname;
 }
