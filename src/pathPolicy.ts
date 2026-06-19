@@ -5,10 +5,10 @@ const PATH_PATTERN = /^\/([a-z0-9]+(-[a-z0-9]+)*)(\/[a-z0-9]+(-[a-z0-9]+)*)*$/;
 
 export type PolicyResult = { ok: true } | { ok: false; reason: string };
 
-export function checkDepth(path: string): PolicyResult {
+export function checkDepth(path: string, maxPageDepth: number = MAX_PAGE_DEPTH): PolicyResult {
   const segments = countSegments(path);
-  if (segments > MAX_PAGE_DEPTH) {
-    return { ok: false, reason: `depth cap exceeded: ${path} has ${segments} segments (max ${MAX_PAGE_DEPTH})` };
+  if (segments > maxPageDepth) {
+    return { ok: false, reason: `depth cap exceeded: ${path} has ${segments} segments (max ${maxPageDepth})` };
   }
   return { ok: true };
 }

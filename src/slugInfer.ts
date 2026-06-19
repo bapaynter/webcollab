@@ -7,7 +7,7 @@ export type SlugResult = { ok: true; value: { slug: string; path: string } } | {
 const EXPLICIT_SLUG_PATTERN = /\/([a-z0-9-]+)/i;
 const VERB_PHRASE_PATTERN = /(?:make|create|add)\s+(?:a\s+(?:page\s+(?:for|about|called)?|thing\s+called|gallery\s+called)?\s*)?["']?([a-z0-9][a-z0-9\s-]*?)["']?\s*(?:page|section|tab|gallery|widget|thing)?\s*$/i;
 
-export function extract(message: string, currentPath: string): SlugResult {
+export function extract(message: string, currentPath: string, maxPageDepth: number = MAX_PAGE_DEPTH): SlugResult {
   const explicitMatch = message.match(EXPLICIT_SLUG_PATTERN);
   let rawSlug: string;
   if (explicitMatch) {
@@ -25,7 +25,7 @@ export function extract(message: string, currentPath: string): SlugResult {
     return { ok: false, reason: "no slug could be inferred" };
   }
   const targetPath = buildPath(currentPath, slug);
-  if (countSegments(targetPath) > MAX_PAGE_DEPTH) {
+  if (countSegments(targetPath) > maxPageDepth) {
     return { ok: false, reason: `depth cap exceeded: ${targetPath}` };
   }
   return { ok: true, value: { slug, path: targetPath } };

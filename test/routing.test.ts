@@ -156,6 +156,27 @@ describe("suggest routing (LLM-based)", () => {
     assert.match(body.reason, /depth/i);
   });
 
+  it("uses configured maxPageDepth for create routing", async () => {
+    const handle = buildServer({
+      dbPath: ":memory:",
+      maxPageDepth: 2,
+      callLLM: validatorOk({ is_new_page: true, new_page_slug: "extra" }),
+      callExecutor: async () => {
+        throw new Error("executor should not be called");
+      },
+    });
+    handles.push(handle);
+    createPage(handle.db, "/a/b", "<!DOCTYPE html><html><body></body></html>");
+    const response = await handle.fastify.inject({
+      method: "POST",
+      url: "/api/suggest",
+      payload: { message: "create extra", path: "/a/b" },
+    });
+    assert.equal(response.statusCode, 422, `body: ${response.body}`);
+    const body = JSON.parse(response.body) as { reason: string };
+    assert.match(body.reason, /depth/i);
+  });
+
   it("rejects when validator returns allowed=false before any pipeline runs", async () => {
     const executorCalled = { value: false };
     const handle = buildServer({

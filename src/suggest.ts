@@ -94,7 +94,7 @@ export async function runSuggest(deps: SuggestDeps, input: SuggestInput): Promis
   }
 
   if (validatorResult.is_new_page) {
-    const slugResolution = resolveNewPagePath(validatorResult.new_page_slug, message, targetPath);
+    const slugResolution = resolveNewPagePath(validatorResult.new_page_slug, message, targetPath, deps.maxPageDepth);
     if (!slugResolution.ok) {
       return { status: "rejected", reason: slugResolution.reason };
     }
@@ -108,19 +108,20 @@ function resolveNewPagePath(
   llmSlug: string | null,
   message: string,
   targetPath: string,
+  maxPageDepth: number,
 ): { ok: true; path: string } | { ok: false; reason: string } {
   if (llmSlug !== null && llmSlug.trim() !== "") {
     const cleanSlug = llmSlug.replace(/^\/+/, "").trim();
     if (cleanSlug !== "" && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(cleanSlug)) {
       const candidate = targetPath === "/" ? `/${cleanSlug}` : `${targetPath}/${cleanSlug}`;
-      const depthCheck = checkDepth(candidate);
+      const depthCheck = checkDepth(candidate, maxPageDepth);
       if (!depthCheck.ok) {
         return { ok: false, reason: depthCheck.reason };
       }
       return { ok: true, path: candidate };
     }
   }
-  const fallback = extractSlug(message, targetPath);
+  const fallback = extractSlug(message, targetPath, maxPageDepth);
   if (!fallback.ok) {
     return { ok: false, reason: `could not determine new page path: ${fallback.reason}` };
   }

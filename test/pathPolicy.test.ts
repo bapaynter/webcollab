@@ -26,6 +26,11 @@ describe("pathPolicy", () => {
     it("uses MAX_PAGE_DEPTH constant", () => {
       assert.equal(MAX_PAGE_DEPTH, 4);
     });
+
+    it("supports custom max depth", () => {
+      assert.equal(checkDepth("/a/b", 2).ok, true);
+      assert.equal(checkDepth("/a/b/c", 2).ok, false);
+    });
   });
 
   describe("validatePathFormat", () => {
