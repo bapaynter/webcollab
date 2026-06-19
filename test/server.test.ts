@@ -155,6 +155,13 @@ describe("server", () => {
       assert.equal(body.path, "/foo");
       assert.equal(body.version, 0);
     });
+
+    it("returns 404 when scoped path is missing", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+      const response = await handle.fastify.inject({ method: "GET", url: "/api/state?path=/nope" });
+      assert.equal(response.statusCode, 404);
+    });
   });
 
   describe("GET /api/page", () => {

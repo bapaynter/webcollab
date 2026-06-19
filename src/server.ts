@@ -113,11 +113,12 @@ export function buildServer(options: ServerOptions): ServerHandle {
     return js;
   });
 
-  fastify.get("/api/state", async (request) => {
+  fastify.get("/api/state", async (request, reply) => {
     const query = request.query as { path?: string };
     if (typeof query.path === "string" && query.path !== "") {
       const page = getPageByPath(db, query.path);
       if (page === null) {
+        reply.code(404);
         return { error: "not found" };
       }
       return {
