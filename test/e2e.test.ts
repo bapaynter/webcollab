@@ -12,6 +12,23 @@ describe("end-to-end", () => {
     }
   });
 
+  async function waitForStatus(
+    port: number,
+    requestId: string,
+  ): Promise<{ status: string; reason?: string; version?: number }> {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const response = await fetch(`http://127.0.0.1:${port}/api/suggest/${encodeURIComponent(requestId)}`);
+      if (response.status === 200) {
+        const body = (await response.json()) as { status: string; reason?: string; version?: number };
+        if (body.status === "accepted" || body.status === "rejected" || body.status === "failed") {
+          return body;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`timed out waiting for request ${requestId}`);
+  }
+
   it("happy path: suggest accepted, page version bumps, ws client receives edit event", async () => {
     const executorResponse =
       "<!DOCTYPE html><html><body><main><h1>Welcome</h1><p>Suggest a change in the chat.</p></main></body></html>";
@@ -48,9 +65,12 @@ describe("end-to-end", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "add a heading to say Welcome", path: "/" }),
     });
-    const suggestBody = (await suggestRes.json()) as { status: string; version: number };
-    assert.equal(suggestBody.status, "accepted");
-    assert.equal(suggestBody.version, 1);
+    assert.equal(suggestRes.status, 202);
+    const suggestBody = (await suggestRes.json()) as { status: string; request_id: string };
+    assert.equal(suggestBody.status, "queued");
+    const terminal = await waitForStatus(port, suggestBody.request_id);
+    assert.equal(terminal.status, "accepted");
+    assert.equal(terminal.version, 1);
 
     await new Promise((r) => setTimeout(r, 50));
     assert.ok(received.length >= 1, "expected ws event");
@@ -108,12 +128,18 @@ describe("end-to-end", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: "add a gallery", path: "/" }),
     });
-    const suggestBody = (await suggestRes.json()) as { status: string; path: string; version: number; reason: string };
-    assert.equal(suggestBody.status, "accepted", `body: ${JSON.stringify(suggestBody)}`);
+    assert.equal(suggestRes.status, 202);
+    const suggestBody = (await suggestRes.json()) as { status: string; request_id: string; path: string };
+    assert.equal(suggestBody.status, "queued", `body: ${JSON.stringify(suggestBody)}`);
     assert.equal(suggestBody.path, "/");
+    const terminal = await waitForStatus(port, suggestBody.request_id);
+    assert.equal(terminal.status, "accepted");
 
     await new Promise((r) => setTimeout(r, 50));
-    const paths = received.map((e) => e.path).sort();
+    const paths = received
+      .filter((event) => event.type === "edit")
+      .map((event) => event.path)
+      .sort();
     assert.deepEqual(paths, ["/", "/gallery"]);
 
     const newPageRes = await fetch(`http://127.0.0.1:${port}/api/page?path=/gallery`);
@@ -219,7 +245,10 @@ describe("end-to-end", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "change the heading to say Welcome", path: "/" }),
       });
-      assert.equal(res.status, 200);
+      assert.equal(res.status, 202);
+      const queued = (await res.json()) as { request_id: string };
+      const terminal = await waitForStatus(port, queued.request_id);
+      assert.equal(terminal.status, "accepted");
       const pageRes = await fetch(`http://127.0.0.1:${port}/api/page?path=/`);
       const pageBody = (await pageRes.json()) as { html: string };
       assert.ok(!/<script/i.test(pageBody.html), "script tag should be stripped by sanitizer");
@@ -248,9 +277,12 @@ describe("end-to-end", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "change the heading to say Welcome", path: "/" }),
       });
+      assert.equal(res.status, 202);
+      const queued = (await res.json()) as { request_id: string };
+      const terminal = await waitForStatus(port, queued.request_id);
       const pageRes = await fetch(`http://127.0.0.1:${port}/api/page?path=/`);
       const pageBody = (await pageRes.json()) as { html: string };
-      if (res.status === 200) {
+      if (terminal.status === "accepted") {
         assert.ok(!/onclick/i.test(pageBody.html), "onclick should be stripped by sanitizer");
       } else {
         assert.ok(!/onclick/i.test(pageBody.html), "page must not contain onclick even after rejection");
@@ -298,9 +330,10 @@ describe("end-to-end", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: "add a gallery", path: "/" }),
       });
-      assert.equal(res.status, 422);
-      const body = (await res.json()) as { reason: string };
-      assert.match(body.reason, /anchor/);
+      assert.equal(res.status, 202);
+      const queued = (await res.json()) as { request_id: string };
+      const body = await waitForStatus(port, queued.request_id);
+      assert.match(body.reason, /linked from current page/);
     });
   });
 });

@@ -16,6 +16,29 @@ describe("server", () => {
     }
   });
 
+  async function waitForSuggestTerminalStatus(
+    handle: ServerHandle,
+    requestId: string,
+  ): Promise<{ status: string; summary?: string; reason?: string; version?: number }> {
+    const maxAttempts = 40;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const response = await handle.fastify.inject({ method: "GET", url: `/api/suggest/${requestId}` });
+      if (response.statusCode === 200) {
+        const body = JSON.parse(response.body) as {
+          status: string;
+          summary?: string;
+          reason?: string;
+          version?: number;
+        };
+        if (body.status === "accepted" || body.status === "rejected" || body.status === "failed") {
+          return body;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`timed out waiting for terminal suggest status: ${requestId}`);
+  }
+
   it("buildServer returns a Fastify instance", () => {
     const handle = buildServer({ dbPath: ":memory:" });
     handles.push(handle);
@@ -317,13 +340,13 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "first", path: "/" },
       });
-      assert.equal(first.statusCode, 200, `body: ${first.body}`);
+      assert.equal(first.statusCode, 202, `body: ${first.body}`);
       const second = await handle.fastify.inject({
         method: "POST",
         url: "/api/suggest",
         payload: { message: "second", path: "/" },
       });
-      assert.equal(second.statusCode, 200, `body: ${second.body}`);
+      assert.equal(second.statusCode, 202, `body: ${second.body}`);
     });
 
     it("enforces cooldown when rateLimitEnabled is true", async () => {
@@ -348,7 +371,7 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "first", path: "/" },
       });
-      assert.equal(first.statusCode, 200, `body: ${first.body}`);
+      assert.equal(first.statusCode, 202, `body: ${first.body}`);
       const second = await handle.fastify.inject({
         method: "POST",
         url: "/api/suggest",
@@ -460,7 +483,7 @@ describe("server", () => {
       assert.equal(failures.length, 0);
     });
 
-    it("returns 200 on accepted edit, bumps page version, writes edit log", async () => {
+    it("returns 202 on accepted edit, then completes with accepted status", async () => {
       const handle = buildServer({
         dbPath: ":memory:",
         callLLM: async () =>
@@ -481,11 +504,52 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "add a heading to say Welcome", path: "/" },
       });
-      assert.equal(response.statusCode, 200, `body: ${response.body}`);
-      const body = JSON.parse(response.body) as { status: string; version: number; path: string };
-      assert.equal(body.status, "accepted");
-      assert.equal(body.path, "/");
-      assert.equal(body.version, 1);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { status: string; request_id: string; path: string };
+      assert.equal(queued.status, "queued");
+      assert.equal(queued.path, "/");
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "accepted");
+      assert.equal(terminal.version, 1);
+    });
+
+    it("hides suggest status from different client IP", async () => {
+      const handle = buildServer({
+        dbPath: ":memory:",
+        ipHashSalt: "b".repeat(64),
+        callLLM: async () =>
+          JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "added heading",
+            elements_estimated: 1,
+            is_new_page: false,
+            new_page_slug: null,
+          }),
+        callExecutor: async () =>
+          "<!DOCTYPE html><html><body><main><h1>Welcome</h1><p>Suggest a change in the chat.</p></main></body></html>",
+      });
+      handles.push(handle);
+      const response = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/suggest",
+        payload: { message: "add heading", path: "/" },
+        remoteAddress: "127.0.0.1",
+      });
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const ownerStatus = await handle.fastify.inject({
+        method: "GET",
+        url: `/api/suggest/${queued.request_id}`,
+        remoteAddress: "127.0.0.1",
+      });
+      assert.equal(ownerStatus.statusCode, 200);
+      const otherStatus = await handle.fastify.inject({
+        method: "GET",
+        url: `/api/suggest/${queued.request_id}`,
+        remoteAddress: "127.0.0.2",
+      });
+      assert.equal(otherStatus.statusCode, 404);
     });
 
     it("returns 422 patch conflict when executor patch does not fit latest page html", async () => {
@@ -525,17 +589,11 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "update intro text", path: "/" },
       });
-      assert.equal(response.statusCode, 422, `body: ${response.body}`);
-      const body = JSON.parse(response.body) as {
-        reason: string;
-        code: string;
-        user_message: string;
-        retryable: boolean;
-      };
-      assert.match(body.reason, /patch conflict/i);
-      assert.equal(body.code, "PATCH_CONFLICT");
-      assert.match(body.user_message, /page changed/i);
-      assert.equal(body.retryable, true);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "rejected");
+      assert.match(terminal.reason ?? "", /page changed/i);
     });
 
     it("rejects 422 when executor returns HTML-wrapped CREATE payload (page stays clean)", async () => {
@@ -559,9 +617,11 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "change the heading", path: "/" },
       });
-      assert.equal(response.statusCode, 422, `body: ${response.body}`);
-      const body = JSON.parse(response.body) as { reason: string };
-      assert.match(body.reason, /CREATE payload/i);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "rejected");
+      assert.match(terminal.reason ?? "", /format was invalid|service returned invalid/i);
       const pageRes = await handle.fastify.inject({ method: "GET", url: "/api/page?path=/" });
       const pageBody = JSON.parse(pageRes.body) as { html: string };
       assert.ok(!/"parent_html"/.test(pageBody.html), "stored html must not contain create-payload JSON");
@@ -624,7 +684,10 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "add a gallery", path: "/foo" },
       });
-      assert.equal(response.statusCode, 200, `body: ${response.body}`);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "accepted");
       const newPageResponse = await handle.fastify.inject({ method: "GET", url: "/foo/gallery" });
       assert.equal(newPageResponse.statusCode, 200, `body: ${newPageResponse.body}`);
     });
@@ -646,7 +709,10 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "add a gallery", path: "/foo" },
       });
-      assert.equal(response.statusCode, 422);
+      assert.equal(response.statusCode, 202);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "rejected");
     });
 
     it("rejects depth cap exceeded", async () => {
@@ -684,9 +750,11 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "add a gallery", path: "/foo" },
       });
-      assert.equal(response.statusCode, 422);
-      const body = JSON.parse(response.body) as { reason: string };
-      assert.match(body.reason, /exists/);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "rejected");
+      assert.match(terminal.reason ?? "", /exists/);
     });
 
     it("records the actual user IP hash in the edits log, not 0.0.0.0", async () => {
@@ -707,7 +775,10 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "add a gallery", path: "/foo" },
       });
-      assert.equal(response.statusCode, 200, `body: ${response.body}`);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "accepted");
       const salt = "a".repeat(64);
       const expectedHash = hashIp(salt, "127.0.0.1");
       const fakeHash = hashIp(salt, "0.0.0.0");
@@ -741,7 +812,10 @@ describe("server", () => {
         url: "/api/suggest",
         payload: { message: "add a gallery", path: "/foo" },
       });
-      assert.equal(response.statusCode, 422, `body: ${response.body}`);
+      assert.equal(response.statusCode, 202, `body: ${response.body}`);
+      const queued = JSON.parse(response.body) as { request_id: string };
+      const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
+      assert.equal(terminal.status, "rejected");
       const fooPage = handle.db.prepare("SELECT current_html, version FROM pages WHERE path = '/foo'").get() as {
         current_html: string;
         version: number;
