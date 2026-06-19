@@ -856,6 +856,32 @@ describe("server", () => {
       });
     });
 
+    it("returns 400 when versions is not a positive integer", async () => {
+      const handle = buildServer({ dbPath: ":memory:" });
+      handles.push(handle);
+
+      const decimal = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/", versions: 1.5 },
+      });
+      assert.equal(decimal.statusCode, 400, `body: ${decimal.body}`);
+
+      const zero = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/", versions: 0 },
+      });
+      assert.equal(zero.statusCode, 400, `body: ${zero.body}`);
+
+      const negative = await handle.fastify.inject({
+        method: "POST",
+        url: "/api/rollback",
+        payload: { path: "/", versions: -1 },
+      });
+      assert.equal(negative.statusCode, 400, `body: ${negative.body}`);
+    });
+
     it("toSeed: true resets to seed version", () => {
       const handle = buildServer({ dbPath: ":memory:" });
       handles.push(handle);

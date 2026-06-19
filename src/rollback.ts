@@ -17,10 +17,17 @@ export function rollbackPage(db: Database, pagePath: string, editsToUndo: number
   const targetVersion = page.version - editsToUndo;
   let targetHtml: string;
   if (targetVersion === 0) {
-    targetHtml = edits[0]?.previous_html ?? "";
+    const oldestEdit = edits[0];
+    if (oldestEdit === undefined) {
+      throw new Error("target edit not found for rollback to seed");
+    }
+    targetHtml = oldestEdit.previous_html;
   } else {
     const targetEdit = edits.find((e) => e.version === targetVersion);
-    targetHtml = targetEdit?.new_html ?? "";
+    if (targetEdit === undefined) {
+      throw new Error(`target edit not found for version ${targetVersion}`);
+    }
+    targetHtml = targetEdit.new_html;
   }
   const now = new Date().toISOString();
   db.prepare("UPDATE pages SET current_html = ?, version = ?, updated_at = ? WHERE id = ?").run(

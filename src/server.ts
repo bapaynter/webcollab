@@ -207,7 +207,11 @@ export function buildServer(options: ServerOptions): ServerHandle {
         if (body.toSeed === true) {
           rollbackToSeed(db, pagePath);
         } else {
-          const editsToUndo = typeof body.versions === "number" ? body.versions : 1;
+          const editsToUndo = parseRollbackVersions(body.versions);
+          if (editsToUndo === null) {
+            reply.code(400);
+            return { error: "versions must be a positive integer" };
+          }
           rollbackPage(db, pagePath, editsToUndo);
         }
       } catch (err) {
@@ -544,6 +548,19 @@ function computeRetryAfterSeconds(until?: string): number | undefined {
     return 0;
   }
   return Math.ceil(remainingMs / 1000);
+}
+
+function parseRollbackVersions(value: unknown): number | null {
+  if (value === undefined) {
+    return 1;
+  }
+  if (typeof value !== "number") {
+    return null;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    return null;
+  }
+  return value;
 }
 
 export async function readPublicFile(name: string): Promise<string> {

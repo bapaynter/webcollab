@@ -68,4 +68,25 @@ describe("rollback", () => {
     const edits = listEdits(db, pageId);
     assert.equal(edits.length, 3);
   });
+
+  it("throws when target edit row is missing", () => {
+    createPage(db, "/foo", "<p>v0</p>");
+    const page = getPageByPath(db, "/foo");
+    if (page === null) {
+      throw new Error("setup");
+    }
+    updatePageHtml(db, page.id, "<p>v1</p>");
+    updatePageHtml(db, page.id, "<p>v2</p>");
+    recordEdit(db, {
+      page_id: page.id,
+      version: 2,
+      user_suggestion: "s2",
+      validator_reasoning: null,
+      validator_change_summary: "sum2",
+      previous_html: "<p>v1</p>",
+      new_html: "<p>v2</p>",
+      ip_hash: "h",
+    });
+    assert.throws(() => rollbackPage(db, "/foo", 1), /target edit not found/i);
+  });
 });
