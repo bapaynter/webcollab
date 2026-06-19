@@ -110,6 +110,12 @@ export async function applyEdit(
   }
   if (looksLikeHtmlDocument(html)) {
     const latestHtml = await resolveLatestHtml(currentHtml, loadLatestHtml);
+    if (latestHtml === null) {
+      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    }
+    if (latestHtml !== currentHtml) {
+      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    }
     return { ok: true, html, previousHtml: latestHtml ?? currentHtml };
   }
   return { ok: false, reason: "executor returned malformed response" };

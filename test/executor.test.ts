@@ -107,6 +107,23 @@ describe("executor", () => {
       }
     });
 
+    it("returns patch conflict for full HTML when latest page changed", async () => {
+      const deps = makeDeps({
+        callLLM: async () => "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
+      });
+      const result = await applyEdit(
+        deps,
+        "add a heading",
+        "<!DOCTYPE html><html><body><h1>Old</h1></body></html>",
+        "/foo",
+        async () => "<!DOCTYPE html><html><body><h1>Latest</h1></body></html>",
+      );
+      assert.equal(result.ok, false);
+      if (!result.ok) {
+        assert.match(result.reason, /patch conflict/i);
+      }
+    });
+
     it("strips code fences from response", async () => {
       const deps = makeDeps({
         callLLM: async () => "```html\n<!DOCTYPE html><html><body><h1>Hi</h1></body></html>\n```",
