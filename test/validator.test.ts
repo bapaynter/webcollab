@@ -88,6 +88,33 @@ describe("validator", () => {
         assert.match(result.reason, /exceeds|delta|max/i);
       }
     });
+
+    it("uses configured maxEditDelta in validator system prompt", async () => {
+      const recordedSystemPrompts: string[] = [];
+      const deps = makeDeps({
+        maxEditDelta: 100,
+        callLLM: async (options) => {
+          const systemPrompt = options.messages.find((message) => message.role === "system")?.content ?? "";
+          recordedSystemPrompts.push(systemPrompt);
+          return JSON.stringify({
+            allowed: true,
+            reason: "ok",
+            change_summary: "add table rows",
+            elements_estimated: 24,
+            is_new_page: false,
+            new_page_slug: null,
+          });
+        },
+      });
+      const result = await validate(deps, "add 4 table rows", "<table><tbody></tbody></table>", "/invoices");
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.equal(result.allowed, true);
+      }
+      assert.equal(recordedSystemPrompts.length, 1);
+      assert.match(recordedSystemPrompts[0] ?? "", /configured max \(100\)/i);
+      assert.ok(!(recordedSystemPrompts[0] ?? "").includes("Exceed 20 element count delta"));
+    });
   });
 
   describe("malformed responses", () => {
