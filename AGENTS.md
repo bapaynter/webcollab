@@ -151,3 +151,10 @@ Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, sim
 - Use try-catch for async operations
 - Log errors with context: console.error('functionName: description', error)
 - Never silently swallow errors
+
+---
+
+## Git Workflow Rules
+
+- After creating a commit, always push it to the tracked remote branch in the same work session.
+- Do not leave local-only commits behind.
