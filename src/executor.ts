@@ -149,35 +149,34 @@ export async function applyCreate(
   parentPath: string,
   newPath: string,
 ): Promise<CreateResult> {
-  let raw: string;
-  try {
-    raw = await deps.callLLM({
-      apiKey: deps.apiKey,
-      model: deps.model,
-      messages: [
-        { role: "system", content: CREATE_SYSTEM_PROMPT },
-        { role: "user", content: buildCreatePrompt(message, parentHtml, parentPath, newPath) },
-      ],
-      maxTokens: deps.maxTokens,
-      temperature: 0,
-      jsonMode: true,
-      timeoutMs: EXECUTOR_TIMEOUT_MS,
-    });
-  } catch (err) {
-    console.error("executor.applyCreate: LLM call failed", err);
-    return { ok: false, reason: "executor unavailable", detail: formatErrorDetail(err) };
+  const createPrompt = buildCreatePrompt(message, parentHtml, parentPath, newPath);
+  let malformedDetail = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    let raw: string;
+    try {
+      raw = await deps.callLLM({
+        apiKey: deps.apiKey,
+        model: deps.model,
+        messages: [
+          { role: "system", content: CREATE_SYSTEM_PROMPT },
+          { role: "user", content: buildCreateAttemptPrompt(createPrompt, attempt) },
+        ],
+        maxTokens: deps.maxTokens,
+        temperature: 0,
+        jsonMode: true,
+        timeoutMs: EXECUTOR_TIMEOUT_MS,
+      });
+    } catch (err) {
+      console.error("executor.applyCreate: LLM call failed", err);
+      return { ok: false, reason: "executor unavailable", detail: formatErrorDetail(err) };
+    }
+    const parsed = parseCreateResponse(raw);
+    if (parsed !== null) {
+      return { ok: true, parent_operations: parsed.parent_operations, new_html: parsed.new_html };
+    }
+    malformedDetail = truncateDetail(raw);
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripCodeFences(raw));
-  } catch (err) {
-    console.error("executor.applyCreate: LLM response was not JSON", err);
-    return { ok: false, reason: "executor returned malformed response", detail: truncateDetail(raw) };
-  }
-  if (!isCreateResponse(parsed)) {
-    return { ok: false, reason: "executor returned malformed response", detail: truncateDetail(raw) };
-  }
-  return { ok: true, parent_operations: parsed.parent_operations, new_html: parsed.new_html };
+  return { ok: false, reason: "executor returned malformed response", detail: malformedDetail };
 }
 
 export function looksLikeCreateJson(content: string): boolean {
@@ -330,6 +329,13 @@ User's requested change: ${message}
 Return JSON only: { "parent_operations": [{"op": string, "target": string, "content"?: string, "occurrence"?: number}], "new_html": string }`;
 }
 
+function buildCreateAttemptPrompt(basePrompt: string, attempt: number): string {
+  if (attempt <= 1) {
+    return basePrompt;
+  }
+  return `${basePrompt}\n\nYour previous response was malformed. Return strict JSON matching schema exactly.`;
+}
+
 function stripCodeFences(content: string): string {
   let trimmed = content.trim();
   if (trimmed.startsWith("```")) {
@@ -353,6 +359,19 @@ function isCreateResponse(value: unknown): value is { parent_operations: Readonl
     return false;
   }
   return v["parent_operations"].every((item: unknown) => isEditPatchOperation(item));
+}
+
+function parseCreateResponse(raw: string): { parent_operations: ReadonlyArray<EditPatchOperation>; new_html: string } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripCodeFences(raw));
+  } catch {
+    return null;
+  }
+  if (!isCreateResponse(parsed)) {
+    return null;
+  }
+  return parsed;
 }
 
 export function applyPatchOperations(

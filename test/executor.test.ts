@@ -259,5 +259,30 @@ describe("executor", () => {
       const result = await applyCreate(deps, "x", "<html></html>", "/foo", "/foo/gallery");
       assert.equal(result.ok, false);
     });
+
+    it("retries once when first create response is malformed", async () => {
+      let callCount = 0;
+      const deps = makeDeps({
+        callLLM: async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return "not json";
+          }
+          return JSON.stringify({
+            parent_operations: [
+              {
+                op: "insertAfter",
+                target: "<body>",
+                content: '<a href="/foo/gallery">Gallery</a>',
+              },
+            ],
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          });
+        },
+      });
+      const result = await applyCreate(deps, "x", "<html></html>", "/foo", "/foo/gallery");
+      assert.equal(callCount, 2);
+      assert.equal(result.ok, true);
+    });
   });
 });
