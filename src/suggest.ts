@@ -1,7 +1,7 @@
 import { isBlocked } from "./preLLMBlocklist.js";
 import { checkCooldown, hashIp, recordAttempt } from "./rateLimit.js";
 import { validate } from "./validator.js";
-import { applyEdit, applyCreate, isCreatePayload } from "./executor.js";
+import { applyEdit, applyCreate, applyPatchOperations, isCreatePayload } from "./executor.js";
 import { sanitizeHTML, checkStructuralDelta, countBodyChildren } from "./sanitize.js";
 import { extract as extractSlug } from "./slugInfer.js";
 import { checkDepth, validatePathFormat } from "./pathPolicy.js";
@@ -311,7 +311,16 @@ async function runCreatePipeline(
     );
     return { status: "rejected", reason: createResult.reason };
   }
-  const sanitizedParent = sanitizeHTML(createResult.parent_html);
+  const patchedParent = applyPatchOperations(parent.current_html, createResult.parent_operations);
+  if (!patchedParent.ok) {
+    console.error("runCreatePipeline: failed to apply parent operations", {
+      parentPath,
+      newPath,
+      reason: patchedParent.reason,
+    });
+    return { status: "rejected", reason: "patch conflict: page changed; refresh and retry" };
+  }
+  const sanitizedParent = sanitizeHTML(patchedParent.html);
   const sanitizedNew = sanitizeHTML(createResult.new_html);
   const linkCheck = verifyLink(sanitizedParent, parentPath, newPath);
   if (!linkCheck.ok) {

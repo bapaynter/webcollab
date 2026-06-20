@@ -48,7 +48,14 @@ Hard rules:
 Output format (CREATE):
 - Return JSON only, no prose, no code fences, with this exact schema:
 {
-  "parent_html": string,
+  "parent_operations": [
+    {
+      "op": "replace" | "replaceAll" | "insertBefore" | "insertAfter" | "remove",
+      "target": string,
+      "content": string,      // required for replace/replaceAll/insertBefore/insertAfter
+      "occurrence": number    // optional, 1-based occurrence (default 1)
+    }
+  ],
   "new_html": string
 }
 - Do NOT return an HTML document. The response must be a single JSON object parseable by JSON.parse.`;
@@ -64,10 +71,21 @@ export interface ExecutorDeps {
 
 export type EditResult = { ok: true; html: string; previousHtml: string } | { ok: false; reason: string; detail?: string };
 export type CreateResult =
-  | { ok: true; parent_html: string; new_html: string }
+  | { ok: true; parent_operations: ReadonlyArray<EditPatchOperation>; new_html: string }
   | { ok: false; reason: string; detail?: string };
 
 type LoadLatestHtml = () => Promise<string | null>;
+
+export interface EditPatchOperation {
+  readonly op: "replace" | "replaceAll" | "insertBefore" | "insertAfter" | "remove";
+  readonly target: string;
+  readonly content?: string;
+  readonly occurrence?: number;
+}
+
+interface EditPatchPayload {
+  readonly operations: ReadonlyArray<EditPatchOperation>;
+}
 
 export async function applyEdit(
   deps: ExecutorDeps,
@@ -159,7 +177,7 @@ export async function applyCreate(
   if (!isCreateResponse(parsed)) {
     return { ok: false, reason: "executor returned malformed response", detail: truncateDetail(raw) };
   }
-  return { ok: true, parent_html: parsed.parent_html, new_html: parsed.new_html };
+  return { ok: true, parent_operations: parsed.parent_operations, new_html: parsed.new_html };
 }
 
 export function looksLikeCreateJson(content: string): boolean {
@@ -177,7 +195,9 @@ export function looksLikeCreateJson(content: string): boolean {
     return false;
   }
   const v = parsed as Record<string, unknown>;
-  return typeof v["parent_html"] === "string" || typeof v["new_html"] === "string";
+  const hasOldCreateKeys = typeof v["parent_html"] === "string" || typeof v["new_html"] === "string";
+  const hasNewCreateKeys = Array.isArray(v["parent_operations"]) && typeof v["new_html"] === "string";
+  return hasOldCreateKeys || hasNewCreateKeys;
 }
 
 function decodeBasicEntities(text: string): string {
@@ -257,7 +277,11 @@ function findCreateJsonInHtml(html: string): boolean {
       if (parsed === null) {
         continue;
       }
-      if (typeof parsed["parent_html"] === "string" || typeof parsed["new_html"] === "string") {
+      if (
+        typeof parsed["parent_html"] === "string" ||
+        typeof parsed["new_html"] === "string" ||
+        Array.isArray(parsed["parent_operations"])
+      ) {
         return true;
       }
     }
@@ -303,7 +327,7 @@ ${parentHtml}
 
 User's requested change: ${message}
 
-Return JSON only: { "parent_html": string, "new_html": string }`;
+Return JSON only: { "parent_operations": [{"op": string, "target": string, "content"?: string, "occurrence"?: number}], "new_html": string }`;
 }
 
 function stripCodeFences(content: string): string {
@@ -320,23 +344,22 @@ function stripCodeFences(content: string): string {
   return trimmed.trim();
 }
 
-function isCreateResponse(value: unknown): value is { parent_html: string; new_html: string } {
+function isCreateResponse(value: unknown): value is { parent_operations: ReadonlyArray<EditPatchOperation>; new_html: string } {
   if (typeof value !== "object" || value === null) {
     return false;
   }
   const v = value as Record<string, unknown>;
-  return typeof v["parent_html"] === "string" && typeof v["new_html"] === "string";
+  if (!Array.isArray(v["parent_operations"]) || typeof v["new_html"] !== "string") {
+    return false;
+  }
+  return v["parent_operations"].every((item: unknown) => isEditPatchOperation(item));
 }
 
-interface EditPatchOperation {
-  readonly op: "replace" | "replaceAll" | "insertBefore" | "insertAfter" | "remove";
-  readonly target: string;
-  readonly content?: string;
-  readonly occurrence?: number;
-}
-
-interface EditPatchPayload {
-  readonly operations: ReadonlyArray<EditPatchOperation>;
+export function applyPatchOperations(
+  currentHtml: string,
+  operations: ReadonlyArray<EditPatchOperation>,
+): { ok: true; html: string } | { ok: false; reason: string } {
+  return applyEditPatch(currentHtml, { operations });
 }
 
 function parseEditPatch(content: string): EditPatchPayload | null {

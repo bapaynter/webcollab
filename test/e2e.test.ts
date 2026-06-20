@@ -89,8 +89,13 @@ describe("end-to-end", () => {
 
   it("new-page flow: creates new page, links from parent, emits two ws events", async () => {
     const executorResponse = JSON.stringify({
-      parent_html:
-        '<!DOCTYPE html><html><body><main><h1>x</h1><p>Suggest a change in the chat.</p><a href="/gallery">Gallery</a></main></body></html>',
+      parent_operations: [
+        {
+          op: "insertAfter",
+          target: "</p>",
+          content: '<a href="/gallery">Gallery</a>',
+        },
+      ],
       new_html: "<!DOCTYPE html><html><body><main><h1>Gallery</h1></main></body></html>",
     });
     const validatorResponse = JSON.stringify({
@@ -318,7 +323,7 @@ describe("end-to-end", () => {
           }),
         callExecutor: async () =>
           JSON.stringify({
-            parent_html: "<!DOCTYPE html><html><body><main><h1>x</h1></main></body></html>",
+            parent_operations: [],
             new_html: "<!DOCTYPE html><html><body><main><h1>Gallery</h1></main></body></html>",
           }),
       });

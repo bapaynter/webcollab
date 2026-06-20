@@ -74,7 +74,13 @@ describe("suggest routing (LLM-based)", () => {
       callExecutor: async (opts) => {
         executorCalls.push(opts);
         return JSON.stringify({
-          parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
+          parent_operations: [
+            {
+              op: "insertAfter",
+              target: "<body>",
+              content: '<a href="/foo/gallery">Gallery</a>',
+            },
+          ],
           new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
         });
       },
@@ -101,7 +107,13 @@ describe("suggest routing (LLM-based)", () => {
       callLLM: validatorOk({ is_new_page: true, new_page_slug: "blog" }),
       callExecutor: async () =>
         JSON.stringify({
-          parent_html: '<!DOCTYPE html><html><body><a href="/blog">Blog</a></body></html>',
+          parent_operations: [
+            {
+              op: "insertAfter",
+              target: "<body>",
+              content: '<a href="/blog">Blog</a>',
+            },
+          ],
           new_html: "<!DOCTYPE html><html><body><h1>Blog</h1></body></html>",
         }),
     });
@@ -125,7 +137,13 @@ describe("suggest routing (LLM-based)", () => {
       callLLM: validatorOk({ is_new_page: true, new_page_slug: null }),
       callExecutor: async () =>
         JSON.stringify({
-          parent_html: '<!DOCTYPE html><html><body><a href="/gallery">Gallery</a></body></html>',
+          parent_operations: [
+            {
+              op: "insertAfter",
+              target: "<body>",
+              content: '<a href="/gallery">Gallery</a>',
+            },
+          ],
           new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
         }),
     });

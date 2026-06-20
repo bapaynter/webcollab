@@ -200,20 +200,56 @@ describe("executor", () => {
   });
 
   describe("applyCreate", () => {
-    it("returns both parent and new HTML", async () => {
+    it("returns parent operations and new HTML", async () => {
       const deps = makeDeps({
         callLLM: async () =>
           JSON.stringify({
-            parent_html: "<!DOCTYPE html><html><body><a href=\"/foo/gallery\">Gallery</a></body></html>",
+            parent_operations: [
+              {
+                op: "insertAfter",
+                target: "<body>",
+                content: '<a href="/foo/gallery">Gallery</a>',
+              },
+            ],
             new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
           }),
       });
       const result = await applyCreate(deps, "add a gallery", "<html><body></body></html>", "/foo", "/foo/gallery");
       assert.equal(result.ok, true);
       if (result.ok) {
-        assert.match(result.parent_html, /href="\/foo\/gallery"/);
+        assert.equal(result.parent_operations.length, 1);
+        assert.equal(result.parent_operations[0]?.op, "insertAfter");
         assert.match(result.new_html, /<h1>Gallery<\/h1>/);
       }
+    });
+
+    it("returns ok=false when parent_operations is not an array", async () => {
+      const deps = makeDeps({
+        callLLM: async () =>
+          JSON.stringify({
+            parent_operations: { op: "insertAfter" },
+            new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
+          }),
+      });
+      const result = await applyCreate(deps, "x", "<html></html>", "/foo", "/foo/gallery");
+      assert.equal(result.ok, false);
+    });
+
+    it("returns ok=false when response is missing new_html", async () => {
+      const deps = makeDeps({
+        callLLM: async () =>
+          JSON.stringify({
+            parent_operations: [
+              {
+                op: "insertAfter",
+                target: "<body>",
+                content: '<a href="/foo/gallery">Gallery</a>',
+              },
+            ],
+          }),
+      });
+      const result = await applyCreate(deps, "x", "<html></html>", "/foo", "/foo/gallery");
+      assert.equal(result.ok, false);
     });
 
     it("returns ok=false on JSON parse error", async () => {

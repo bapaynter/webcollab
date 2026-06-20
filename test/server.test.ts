@@ -673,7 +673,13 @@ describe("server", () => {
         callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
-            parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
+            parent_operations: [
+              {
+                op: "insertAfter",
+                target: "<body>",
+                content: '<a href="/foo/gallery">Gallery</a>',
+              },
+            ],
             new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
           }),
       });
@@ -698,7 +704,7 @@ describe("server", () => {
         callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
-            parent_html: "<!DOCTYPE html><html><body></body></html>",
+            parent_operations: [],
             new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
           }),
       });
@@ -738,7 +744,13 @@ describe("server", () => {
         callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
-            parent_html: '<!DOCTYPE html><html><body><a href="/foo">x</a></body></html>',
+            parent_operations: [
+              {
+                op: "insertAfter",
+                target: "<body>",
+                content: '<a href="/foo">x</a>',
+              },
+            ],
             new_html: "<!DOCTYPE html><html><body></body></html>",
           }),
       });
@@ -764,7 +776,13 @@ describe("server", () => {
         callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () =>
           JSON.stringify({
-            parent_html: '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>',
+            parent_operations: [
+              {
+                op: "insertAfter",
+                target: "<body>",
+                content: '<a href="/foo/gallery">Gallery</a>',
+              },
+            ],
             new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
           }),
       });
@@ -793,14 +811,19 @@ describe("server", () => {
 
     it("rolls back parent update if new page insert fails (atomic create)", async () => {
       const initialParentHtml = "<!DOCTYPE html><html><body><p>original</p></body></html>";
-      const newParentHtml = '<!DOCTYPE html><html><body><a href="/foo/gallery">Gallery</a></body></html>';
       const handle = buildServer({
         dbPath: ":memory:",
         callLLM: validatorSaysCreate("gallery"),
         callExecutor: async () => {
           createPage(handle.db, "/foo/gallery", "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>");
           return JSON.stringify({
-            parent_html: newParentHtml,
+            parent_operations: [
+              {
+                op: "replace",
+                target: "<p>original</p>",
+                content: '<a href="/foo/gallery">Gallery</a>',
+              },
+            ],
             new_html: "<!DOCTYPE html><html><body><h1>Gallery</h1></body></html>",
           });
         },
