@@ -69,7 +69,7 @@ describe("executor", () => {
       }
     });
 
-    it("returns patch conflict when patch does not fit latest HTML", async () => {
+    it("returns patch apply failed when patch still does not fit after one retry", async () => {
       const deps = makeDeps({
         callLLM: async () =>
           JSON.stringify({
@@ -91,7 +91,48 @@ describe("executor", () => {
       );
       assert.equal(result.ok, false);
       if (!result.ok) {
-        assert.match(result.reason, /patch conflict/i);
+        assert.match(result.reason, /patch apply failed/i);
+      }
+    });
+
+    it("retries once and succeeds when second patch fits latest HTML", async () => {
+      let callCount = 0;
+      const deps = makeDeps({
+        callLLM: async () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return JSON.stringify({
+              operations: [
+                {
+                  op: "replace",
+                  target: "<h1>Old</h1>",
+                  content: "<h1>Patched</h1>",
+                },
+              ],
+            });
+          }
+          return JSON.stringify({
+            operations: [
+              {
+                op: "replace",
+                target: "<h1>Latest</h1>",
+                content: "<h1>Patched</h1>",
+              },
+            ],
+          });
+        },
+      });
+      const result = await applyEdit(
+        deps,
+        "change heading",
+        "<!DOCTYPE html><html><body><main><h1>Old</h1></main></body></html>",
+        "/foo",
+        async () => "<!DOCTYPE html><html><body><main><h1>Latest</h1></main></body></html>",
+      );
+      assert.equal(callCount, 2);
+      assert.equal(result.ok, true);
+      if (result.ok) {
+        assert.match(result.html, /<h1>Patched<\/h1>/);
       }
     });
 
@@ -120,7 +161,7 @@ describe("executor", () => {
       );
       assert.equal(result.ok, false);
       if (!result.ok) {
-        assert.match(result.reason, /patch conflict/i);
+        assert.match(result.reason, /stale snapshot/i);
       }
     });
 

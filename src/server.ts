@@ -550,6 +550,16 @@ function buildSuggestErrorPayload(rejected: SuggestRejectedResult): SuggestError
     };
   }
 
+  if (rejected.reason.startsWith("patch apply failed:")) {
+    return {
+      ...base,
+      code: "PATCH_TARGET_MISMATCH",
+      user_message: "Edit could not match page text exactly.",
+      hint: "Retry request; if it fails again, make instruction more specific.",
+      retryable: true,
+    };
+  }
+
   if (rejected.reason === "validator unavailable" || rejected.reason === "executor unavailable") {
     return {
       ...base,
@@ -682,6 +692,9 @@ function isClassifierRejectReason(reason: string): boolean {
     return false;
   }
   if (reason.startsWith("patch conflict:")) {
+    return false;
+  }
+  if (reason.startsWith("patch apply failed:")) {
     return false;
   }
   if (reason === "validator unavailable" || reason === "executor unavailable") {

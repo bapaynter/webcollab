@@ -1,4 +1,5 @@
 import { type CallOptions } from "./llm.js";
+import { createHash } from "node:crypto";
 
 const EDIT_SYSTEM_PROMPT = `You are an HTML editor for a collaborative website. You will receive the current HTML of a page and a user's requested change to THAT page.
 
@@ -94,50 +95,61 @@ export async function applyEdit(
   currentPath: string,
   loadLatestHtml?: LoadLatestHtml,
 ): Promise<EditResult> {
-  let raw: string;
-  try {
-    raw = await deps.callLLM({
-      apiKey: deps.apiKey,
-      model: deps.model,
-      messages: [
-        { role: "system", content: EDIT_SYSTEM_PROMPT },
-        { role: "user", content: buildEditPrompt(message, currentHtml, currentPath) },
-      ],
-      maxTokens: deps.maxTokens,
-      temperature: 0,
-      timeoutMs: EXECUTOR_TIMEOUT_MS,
-    });
-  } catch (err) {
-    console.error("executor.applyEdit: LLM call failed", err);
-    return { ok: false, reason: "executor unavailable", detail: formatErrorDetail(err) };
-  }
-  const html = stripCodeFences(raw);
-  if (isCreatePayload(html)) {
-    console.error("executor.applyEdit: LLM returned CREATE payload for EDIT request", { currentPath });
-    return { ok: false, reason: "executor returned CREATE payload for EDIT request" };
-  }
-  const patch = parseEditPatch(html);
-  if (patch !== null) {
-    const latestHtml = await resolveLatestHtml(currentHtml, loadLatestHtml);
-    if (latestHtml === null) {
-      return { ok: false, reason: PATCH_CONFLICT_REASON };
+  let promptHtml = currentHtml;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    let raw: string;
+    try {
+      raw = await deps.callLLM({
+        apiKey: deps.apiKey,
+        model: deps.model,
+        messages: [
+          { role: "system", content: EDIT_SYSTEM_PROMPT },
+          { role: "user", content: buildEditAttemptPrompt(message, promptHtml, currentPath, attempt) },
+        ],
+        maxTokens: deps.maxTokens,
+        temperature: 0,
+        timeoutMs: EXECUTOR_TIMEOUT_MS,
+      });
+    } catch (err) {
+      console.error("executor.applyEdit: LLM call failed", err);
+      return { ok: false, reason: "executor unavailable", detail: formatErrorDetail(err) };
     }
-    const patched = applyEditPatch(latestHtml, patch);
-    if (!patched.ok) {
-      console.error("executor.applyEdit: failed to apply edit patch", { currentPath, reason: patched.reason });
-      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    const html = stripCodeFences(raw);
+    if (isCreatePayload(html)) {
+      console.error("executor.applyEdit: LLM returned CREATE payload for EDIT request", { currentPath });
+      return { ok: false, reason: "executor returned CREATE payload for EDIT request" };
     }
-    return { ok: true, html: patched.html, previousHtml: latestHtml };
-  }
-  if (looksLikeHtmlDocument(html)) {
-    const latestHtml = await resolveLatestHtml(currentHtml, loadLatestHtml);
-    if (latestHtml === null) {
-      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    const patch = parseEditPatch(html);
+    if (patch !== null) {
+      const latestHtml = await resolveLatestHtml(promptHtml, loadLatestHtml);
+      if (latestHtml === null) {
+        console.error("executor.applyEdit: latest html unavailable", { currentPath, attempt });
+        return { ok: false, reason: PATCH_CONFLICT_LATEST_HTML_UNAVAILABLE };
+      }
+      const patched = applyEditPatch(latestHtml, patch);
+      if (!patched.ok) {
+        logPatchApplyFailure(currentPath, attempt, patched);
+        if (attempt === 1) {
+          promptHtml = latestHtml;
+          continue;
+        }
+        return { ok: false, reason: `${PATCH_APPLY_FAILED_PREFIX} ${patched.reason}` };
+      }
+      return { ok: true, html: patched.html, previousHtml: latestHtml };
     }
-    if (latestHtml !== currentHtml) {
-      return { ok: false, reason: PATCH_CONFLICT_REASON };
+    if (looksLikeHtmlDocument(html)) {
+      const latestHtml = await resolveLatestHtml(promptHtml, loadLatestHtml);
+      if (latestHtml === null) {
+        console.error("executor.applyEdit: latest html unavailable", { currentPath, attempt });
+        return { ok: false, reason: PATCH_CONFLICT_LATEST_HTML_UNAVAILABLE };
+      }
+      if (latestHtml !== promptHtml) {
+        console.error("executor.applyEdit: stale snapshot", { currentPath, attempt });
+        return { ok: false, reason: PATCH_CONFLICT_STALE_SNAPSHOT };
+      }
+      return { ok: true, html, previousHtml: latestHtml };
     }
-    return { ok: true, html, previousHtml: latestHtml ?? currentHtml };
+    return { ok: false, reason: "executor returned malformed response" };
   }
   return { ok: false, reason: "executor returned malformed response" };
 }
@@ -312,6 +324,14 @@ User's requested change: ${message}
 Return JSON patch operations only. No prose, no code fences.`;
 }
 
+function buildEditAttemptPrompt(message: string, currentHtml: string, currentPath: string, attempt: number): string {
+  const basePrompt = buildEditPrompt(message, currentHtml, currentPath);
+  if (attempt <= 1) {
+    return basePrompt;
+  }
+  return `${basePrompt}\n\nPrevious patch could not be applied. Return operations with target values copied exactly from Current HTML.`;
+}
+
 function buildCreatePrompt(
   message: string,
   parentHtml: string,
@@ -438,13 +458,23 @@ function isEditPatchOperation(value: unknown): value is EditPatchOperation {
   return typeof content === "string";
 }
 
-function applyEditPatch(currentHtml: string, patch: EditPatchPayload): { ok: true; html: string } | { ok: false; reason: string } {
+function applyEditPatch(
+  currentHtml: string,
+  patch: EditPatchPayload,
+):
+  | { ok: true; html: string }
+  | { ok: false; reason: string; failedOperationIndex: number; failedOperation: EditPatchOperation } {
   let html = currentHtml;
   for (let index = 0; index < patch.operations.length; index += 1) {
     const operation = patch.operations[index];
     const result = applyOperation(html, operation);
     if (!result.ok) {
-      return { ok: false, reason: `patch op ${index + 1} failed: ${result.reason}` };
+      return {
+        ok: false,
+        reason: `patch op ${index + 1} failed: ${result.reason}`,
+        failedOperationIndex: index,
+        failedOperation: operation,
+      };
     }
     html = result.html;
   }
@@ -516,7 +546,9 @@ function looksLikeHtmlDocument(content: string): boolean {
   return lower.includes("<html") && lower.includes("<body");
 }
 
-const PATCH_CONFLICT_REASON = "patch conflict: page changed; refresh and retry";
+const PATCH_CONFLICT_LATEST_HTML_UNAVAILABLE = "patch conflict: latest html unavailable; refresh and retry";
+const PATCH_CONFLICT_STALE_SNAPSHOT = "patch conflict: stale snapshot; refresh and retry";
+const PATCH_APPLY_FAILED_PREFIX = "patch apply failed:";
 
 async function resolveLatestHtml(currentHtml: string, loadLatestHtml?: LoadLatestHtml): Promise<string | null> {
   if (loadLatestHtml === undefined) {
@@ -547,4 +579,30 @@ function truncateDetail(detail: string): string {
     return detail;
   }
   return detail.slice(0, MAX_DETAIL_LENGTH);
+}
+
+function logPatchApplyFailure(
+  currentPath: string,
+  attempt: number,
+  failure: {
+    readonly reason: string;
+    readonly failedOperationIndex: number;
+    readonly failedOperation: EditPatchOperation;
+  },
+): void {
+  const failedOperation = failure.failedOperation;
+  const target = failedOperation.target;
+  console.error("executor.applyEdit: patch apply failed", {
+    currentPath,
+    attempt,
+    reason: failure.reason,
+    operationIndex: failure.failedOperationIndex + 1,
+    op: failedOperation.op,
+    targetLength: target.length,
+    targetHash: hashForLog(target),
+  });
+}
+
+function hashForLog(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }

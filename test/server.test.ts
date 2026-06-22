@@ -552,7 +552,7 @@ describe("server", () => {
       assert.equal(otherStatus.statusCode, 404);
     });
 
-    it("returns 422 patch conflict when executor patch does not fit latest page html", async () => {
+    it("returns PATCH_TARGET_MISMATCH when executor patch cannot match latest page html", async () => {
       let handle: ServerHandle;
       handle = buildServer({
         dbPath: ":memory:",
@@ -593,7 +593,7 @@ describe("server", () => {
       const queued = JSON.parse(response.body) as { request_id: string };
       const terminal = await waitForSuggestTerminalStatus(handle, queued.request_id);
       assert.equal(terminal.status, "rejected");
-      assert.match(terminal.reason ?? "", /page changed/i);
+      assert.match(terminal.reason ?? "", /could not match page text/i);
     });
 
     it("rejects 422 when executor returns HTML-wrapped CREATE payload (page stays clean)", async () => {
